@@ -20,4 +20,4 @@ WORKDIR /app
 
 EXPOSE 8809
 
-CMD ["supergateway", "--port", "8809", "--stdio", "yahoo-finance-mcp"]
+CMD ["supergateway", "--port", "8809", "--stdio", "yahoo-finance-mcp", "--outputTransport", "streamableHttp", "--streamableHttpPath", "/mcp", "--stateful"]

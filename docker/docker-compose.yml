@@ -19,3 +19,33 @@ services:
     ports:
       - "8809:8809"
     restart: unless-stopped
+
+  price-data-mcp:
+    build:
+      context: ../mcp-services/price-data-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "8810:8810"
+    environment:
+      DB_USER: ${DB_USER:-}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      DB_HOST: ${DB_HOST:-}
+      DB_NAME: ${DB_NAME:-}
+      DB_PORT: ${DB_PORT:-}
+      DB_SSLMODE: ${DB_SSLMODE:-}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      DB_SSLCERT: ${DB_SSLCERT:-}
+      DB_SSLKEY: ${DB_SSLKEY:-}
+      PRICE_CANDLES_SCHEMA: ${PRICE_CANDLES_SCHEMA:-public}
+      PRICE_CANDLES_TABLE: ${PRICE_CANDLES_TABLE:-price_candles}
+      PRICE_CANDLES_SYMBOL_COLUMN: ${PRICE_CANDLES_SYMBOL_COLUMN:-symbol}
+      PRICE_CANDLES_INTERVAL_COLUMN: ${PRICE_CANDLES_INTERVAL_COLUMN:-interval}
+      PRICE_CANDLES_TIMESTAMP_COLUMN: ${PRICE_CANDLES_TIMESTAMP_COLUMN:-ts}
+      PRICE_CANDLES_OPEN_COLUMN: ${PRICE_CANDLES_OPEN_COLUMN:-open}
+      PRICE_CANDLES_HIGH_COLUMN: ${PRICE_CANDLES_HIGH_COLUMN:-high}
+      PRICE_CANDLES_LOW_COLUMN: ${PRICE_CANDLES_LOW_COLUMN:-low}
+      PRICE_CANDLES_CLOSE_COLUMN: ${PRICE_CANDLES_CLOSE_COLUMN:-close}
+      PRICE_CANDLES_VOLUME_COLUMN: ${PRICE_CANDLES_VOLUME_COLUMN:-volume}
+      PRICE_DATA_DEFAULT_LIMIT: ${PRICE_DATA_DEFAULT_LIMIT:-200}
+      PRICE_DATA_MAX_LIMIT: ${PRICE_DATA_MAX_LIMIT:-5000}
+    restart: unless-stopped
