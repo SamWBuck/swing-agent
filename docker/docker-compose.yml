@@ -1,4 +1,17 @@
 services:
+  edgar-mcp:
+    build:
+      context: ../mcp-services/edgar-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "9870:9870"
+    environment:
+      # Required: identify yourself to the SEC EDGAR API.
+      # Set this in a .env file next to docker-compose.yml.
+      # Format: "First Last (email@example.com)"
+      SEC_EDGAR_USER_AGENT: ${SEC_EDGAR_USER_AGENT:-}
+    restart: unless-stopped
+
   yahoo-finance-mcp:
     build:
       context: ../mcp-services/yahoo-finance-mcp

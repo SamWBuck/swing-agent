@@ -1,5 +1,9 @@
 {
   "servers": {
+    "sec-edgar": {
+      "type": "http",
+      "url": "http://localhost:9870/mcp"
+    },
     "yahoo-finance": {
       "type": "sse",
       "url": "http://localhost:8808/sse"
