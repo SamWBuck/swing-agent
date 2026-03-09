@@ -17,9 +17,5 @@ services:
       context: ../mcp-services/yahoo-finance-mcp
       dockerfile: Dockerfile
     ports:
-      - "8808:8808"
-    environment:
-      # Optional: set PROXY_URL in a .env file next to docker-compose.yml
-      # e.g.  PROXY_URL=http://proxy.example.com:8080
-      PROXY_URL: ${PROXY_URL:-}
+      - "8809:8809"
     restart: unless-stopped
