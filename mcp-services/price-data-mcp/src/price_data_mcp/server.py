@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from swing_agent_database import PriceStore, load_price_store_settings
 
 try:
     from .analysis import (
@@ -14,8 +15,6 @@ try:
         indicator_catalog,
         serialize_frame,
     )
-    from .config import load_settings
-    from .db import PriceStore
 except ImportError:
     from price_data_mcp.analysis import (
         calculate_support_resistance,
@@ -25,11 +24,9 @@ except ImportError:
         indicator_catalog,
         serialize_frame,
     )
-    from price_data_mcp.config import load_settings
-    from price_data_mcp.db import PriceStore
 
 
-settings = load_settings()
+settings = load_price_store_settings()
 store = PriceStore(settings)
 mcp = FastMCP("price-data-mcp")
 

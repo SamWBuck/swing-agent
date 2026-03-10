@@ -20,7 +20,7 @@ def _optional_env(name: str) -> str | None:
     return value
 
 
-def _build_database_url() -> str:
+def build_database_url(*, consumer_name: str = "service") -> str:
     direct_url = os.getenv("DATABASE_URL")
     if direct_url:
         return direct_url
@@ -30,8 +30,8 @@ def _build_database_url() -> str:
     missing = [name for name, value in values.items() if value is None or value == ""]
     if missing:
         raise RuntimeError(
-            "Missing database environment variables for price-data-mcp: "
-            f"{missing}. Set DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, and DB_NAME or provide DATABASE_URL."
+            f"Missing database environment variables for {consumer_name}: {missing}. "
+            "Set DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, and DB_NAME or provide DATABASE_URL."
         )
 
     query: dict[str, str] = {}
@@ -62,7 +62,7 @@ def _build_database_url() -> str:
 
 
 @dataclass(frozen=True)
-class Settings:
+class PriceStoreSettings:
     database_url: str
     schema_name: str
     table_name: str
@@ -78,9 +78,9 @@ class Settings:
     max_limit: int
 
 
-def load_settings() -> Settings:
-    return Settings(
-        database_url=_build_database_url(),
+def load_price_store_settings(*, consumer_name: str = "price-data-mcp") -> PriceStoreSettings:
+    return PriceStoreSettings(
+        database_url=build_database_url(consumer_name=consumer_name),
         schema_name=os.getenv("PRICE_CANDLES_SCHEMA", "public"),
         table_name=os.getenv("PRICE_CANDLES_TABLE", "price_candles"),
         symbol_column=os.getenv("PRICE_CANDLES_SYMBOL_COLUMN", "symbol"),

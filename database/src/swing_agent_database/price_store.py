@@ -9,7 +9,7 @@ from sqlalchemy import MetaData, Table, asc, create_engine, desc, distinct, sele
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from .config import Settings
+from .config import PriceStoreSettings
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ class CandleColumns:
 
 
 class PriceStore:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: PriceStoreSettings) -> None:
         self._settings = settings
         self._engine: Engine = create_engine(settings.database_url, pool_pre_ping=True)
         self._metadata = MetaData(schema=settings.schema_name)
@@ -56,15 +56,11 @@ class PriceStore:
         return self._columns
 
     @property
-    def settings(self) -> Settings:
+    def settings(self) -> PriceStoreSettings:
         return self._settings
 
     def _validate_columns(self) -> None:
-        missing = [
-            name
-            for name in self._columns.__dict__.values()
-            if name not in self._table.c
-        ]
+        missing = [name for name in self._columns.__dict__.values() if name not in self._table.c]
         if missing:
             raise RuntimeError(
                 f"Configured candle columns were not found in "

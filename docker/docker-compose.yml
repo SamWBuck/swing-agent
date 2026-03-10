@@ -19,8 +19,8 @@ services:
 
   price-data-mcp:
     build:
-      context: ../mcp-services/price-data-mcp
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: mcp-services/price-data-mcp/Dockerfile
     ports:
       - "8810:8810"
     env_file:
