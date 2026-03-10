@@ -96,6 +96,16 @@ class PortfolioStoreSettings:
     trade_events_table_name: str
 
 
+@dataclass(frozen=True)
+class AutomationStoreSettings:
+    database_url: str
+    schema_name: str
+    runs_table_name: str
+    accounts_table_name: str
+    positions_table_name: str
+    decisions_table_name: str
+
+
 def load_price_store_settings(*, consumer_name: str = "price-data-mcp") -> PriceStoreSettings:
     return PriceStoreSettings(
         database_url=build_database_url(consumer_name=consumer_name),
@@ -131,4 +141,15 @@ def load_portfolio_store_settings(*, consumer_name: str = "service") -> Portfoli
         positions_table_name=os.getenv("PORTFOLIO_POSITIONS_TABLE", "positions"),
         position_legs_table_name=os.getenv("PORTFOLIO_POSITION_LEGS_TABLE", "position_legs"),
         trade_events_table_name=os.getenv("PORTFOLIO_TRADE_EVENTS_TABLE", "trade_events"),
+    )
+
+
+def load_automation_store_settings(*, consumer_name: str = "service") -> AutomationStoreSettings:
+    return AutomationStoreSettings(
+        database_url=build_database_url(consumer_name=consumer_name),
+        schema_name=os.getenv("AUTOMATION_SCHEMA", "public"),
+        runs_table_name=os.getenv("AUTOMATION_RUNS_TABLE", "automation_runs"),
+        accounts_table_name=os.getenv("AUTOMATION_ACCOUNTS_TABLE", "broker_accounts"),
+        positions_table_name=os.getenv("AUTOMATION_POSITIONS_TABLE", "broker_positions"),
+        decisions_table_name=os.getenv("AUTOMATION_DECISIONS_TABLE", "automation_decisions"),
     )

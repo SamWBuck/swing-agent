@@ -1,11 +1,20 @@
 from .config import (
+    AutomationStoreSettings,
     PortfolioStoreSettings,
     PriceStoreSettings,
     SymbolAvailabilitySettings,
     build_database_url,
+    load_automation_store_settings,
     load_portfolio_store_settings,
     load_price_store_settings,
     load_symbol_availability_settings,
+)
+from .automation_store import (
+    AutomationDecisionRecord,
+    AutomationRunRecord,
+    AutomationStore,
+    BrokerAccountRecord,
+    BrokerPositionRecord,
 )
 from .portfolio_store import (
     OptionLegInput,
@@ -22,6 +31,12 @@ from .price_store import CandleColumns, PriceStore
 from .symbol_availability import SymbolAvailabilityRecord, SymbolAvailabilityStore
 
 __all__ = [
+    "AutomationDecisionRecord",
+    "AutomationRunRecord",
+    "AutomationStore",
+    "AutomationStoreSettings",
+    "BrokerAccountRecord",
+    "BrokerPositionRecord",
     "CandleColumns",
     "OptionLegInput",
     "PortfolioRecord",
@@ -39,6 +54,7 @@ __all__ = [
     "SymbolAvailabilityStore",
     "TradeEventRecord",
     "build_database_url",
+    "load_automation_store_settings",
     "load_portfolio_store_settings",
     "load_price_store_settings",
     "load_symbol_availability_settings",

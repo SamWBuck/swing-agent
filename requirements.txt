@@ -8,4 +8,5 @@ SQLAlchemy>=2.0.0
 ta>=0.11.0
 yfinance>=0.2.62
 -e ./database
+-e ./services/schwab-automation
 -e ./services/schwab-price-sync

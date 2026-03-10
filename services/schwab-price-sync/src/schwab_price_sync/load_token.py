@@ -38,6 +38,7 @@ async def _main_async(args: argparse.Namespace) -> None:
 
     settings = load_settings()
     client = create_async_client(settings)
+    resp = await client.get_account('FB8CBA008A2B78D7860521B53344476629E07F2E73B4E9BB196E5BEFD7395361', fields=client.Account.Fields.POSITIONS)
     response = await client.get_price_history_every_day(args.symbol)
     response.raise_for_status()
 

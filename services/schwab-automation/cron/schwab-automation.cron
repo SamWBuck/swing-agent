@@ -1,0 +1,1 @@
+5 * * * * root . /app/.cron_env; /app/cron/run_hourly.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
