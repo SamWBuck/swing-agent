@@ -85,6 +85,17 @@ class SymbolAvailabilitySettings:
     table_name: str
 
 
+@dataclass(frozen=True)
+class PortfolioStoreSettings:
+    database_url: str
+    schema_name: str
+    users_table_name: str
+    portfolios_table_name: str
+    positions_table_name: str
+    position_legs_table_name: str
+    trade_events_table_name: str
+
+
 def load_price_store_settings(*, consumer_name: str = "price-data-mcp") -> PriceStoreSettings:
     return PriceStoreSettings(
         database_url=build_database_url(consumer_name=consumer_name),
@@ -108,4 +119,16 @@ def load_symbol_availability_settings(*, consumer_name: str = "service") -> Symb
         database_url=build_database_url(consumer_name=consumer_name),
         schema_name=os.getenv("SYMBOL_AVAILABILITY_SCHEMA", "public"),
         table_name=os.getenv("SYMBOL_AVAILABILITY_TABLE", "symbol_availability"),
+    )
+
+
+def load_portfolio_store_settings(*, consumer_name: str = "service") -> PortfolioStoreSettings:
+    return PortfolioStoreSettings(
+        database_url=build_database_url(consumer_name=consumer_name),
+        schema_name=os.getenv("PORTFOLIO_SCHEMA", "public"),
+        users_table_name=os.getenv("PORTFOLIO_USERS_TABLE", "users"),
+        portfolios_table_name=os.getenv("PORTFOLIO_PORTFOLIOS_TABLE", "portfolios"),
+        positions_table_name=os.getenv("PORTFOLIO_POSITIONS_TABLE", "positions"),
+        position_legs_table_name=os.getenv("PORTFOLIO_POSITION_LEGS_TABLE", "position_legs"),
+        trade_events_table_name=os.getenv("PORTFOLIO_TRADE_EVENTS_TABLE", "trade_events"),
     )

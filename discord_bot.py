@@ -12,12 +12,20 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import discord
 from copilot import CopilotClient, PermissionHandler
 from dotenv import load_dotenv
-from swing_agent_database import SymbolAvailabilityStore, load_symbol_availability_settings
+from swing_agent_database import (
+    OptionLegInput,
+    PortfolioSnapshot,
+    PortfolioStore,
+    SymbolAvailabilityStore,
+    load_portfolio_store_settings,
+    load_symbol_availability_settings,
+)
 import yfinance as yf
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -107,6 +115,7 @@ _DISCORD_MAX_CHARS = 2000
 _SESSION_IDLE_TTL_SECONDS = 15 * 60
 _SESSION_RESPONSE_TIMEOUT_SECONDS = 600.0
 _SESSION_CLEANUP_INTERVAL_SECONDS = 60.0
+_FLOW_IDLE_TTL_SECONDS = 10 * 60
 
 _INTERVAL_COLUMNS = [
     ("1m", "latest_1m_ts"),
@@ -134,6 +143,7 @@ intents.message_content = True
 discord_client = discord.Client(intents=intents)
 copilot_client = CopilotClient()
 _symbol_availability_store: SymbolAvailabilityStore | None = None
+_portfolio_store: PortfolioStore | None = None
 
 
 @dataclass
@@ -144,8 +154,17 @@ class UserSessionEntry:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+@dataclass
+class PendingPortfolioFlow:
+    action: str
+    channel_id: int
+    created_at: float = field(default_factory=time.monotonic)
+    data: dict = field(default_factory=dict)
+
+
 _user_sessions: dict[int, UserSessionEntry] = {}
 _session_cleanup_task: asyncio.Task | None = None
+_portfolio_flows: dict[int, PendingPortfolioFlow] = {}
 
 
 def _strip_mention(content: str, bot_user: discord.ClientUser) -> str:
@@ -171,6 +190,14 @@ def _get_symbol_availability_store() -> SymbolAvailabilityStore:
             load_symbol_availability_settings(consumer_name="discord-bot")
         )
     return _symbol_availability_store
+
+
+def _get_portfolio_store() -> PortfolioStore:
+    global _portfolio_store
+
+    if _portfolio_store is None:
+        _portfolio_store = PortfolioStore(load_portfolio_store_settings(consumer_name="discord-bot"))
+    return _portfolio_store
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -239,6 +266,23 @@ def _normalize_symbol(raw_symbol: str) -> str:
     return raw_symbol.strip().upper()
 
 
+def _parse_decimal(raw_value: str, *, field_name: str) -> Decimal:
+    try:
+        return Decimal(raw_value)
+    except InvalidOperation as exc:
+        raise ValueError(f"Invalid {field_name}: `{raw_value}`") from exc
+
+
+def _parse_positive_int(raw_value: str, *, field_name: str) -> int:
+    try:
+        parsed = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field_name}: `{raw_value}`") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field_name.capitalize()} must be positive.")
+    return parsed
+
+
 def _validate_command_symbol(symbol: str) -> str | None:
     if not symbol:
         return "Usage: `add <ticker>`"
@@ -259,6 +303,98 @@ def _verify_ticker_exists(symbol: str) -> tuple[bool, str]:
         return False, f"`{symbol}` resolved to unsupported instrument type `{instrument_type}`."
 
     return True, ""
+
+
+def _is_symbol_tracked(symbol: str) -> bool:
+    return _get_symbol_availability_store().get_symbol(symbol) is not None
+
+
+def _format_money(value: Decimal) -> str:
+    return f"${value:,.2f}"
+
+
+def _format_leg_summary(leg: object) -> str:
+    entry_price = Decimal(leg.entry_price)
+    if leg.leg_type == "stock":
+        return f"stock {leg.quantity} @ {_format_money(entry_price)}"
+
+    expiration = leg.expiration.isoformat() if leg.expiration is not None else "n/a"
+    return (
+        f"{leg.side} {leg.quantity} {leg.option_type} {leg.strike} {expiration} "
+        f"@ {_format_money(entry_price)}"
+    )
+
+
+def _render_portfolio_summary(snapshot: PortfolioSnapshot) -> str:
+    lines = [
+        f"Portfolio `{snapshot.portfolio.name}`",
+        f"Cash available: {_format_money(snapshot.portfolio.cash_available)}",
+        f"Cash reserved: {_format_money(snapshot.portfolio.cash_reserved)}",
+    ]
+
+    if not snapshot.open_positions:
+        lines.append("Open positions: none")
+        return "\n".join(lines)
+
+    lines.append("Open positions:")
+    for item in snapshot.open_positions:
+        position = item.position
+        lines.append(
+            f"- #{position.id} {position.symbol} | {position.strategy_type} | qty {position.quantity} | opened {position.opened_at.date().isoformat()}"
+        )
+        for leg in item.legs:
+            lines.append(f"  - {_format_leg_summary(leg)}")
+
+    return "\n".join(lines)
+
+
+def _build_portfolio_context(snapshot: PortfolioSnapshot) -> str:
+    lines = [
+        "Saved portfolio context:",
+        f"- Portfolio: {snapshot.portfolio.name}",
+        f"- Cash available: {_format_money(snapshot.portfolio.cash_available)}",
+        f"- Cash reserved: {_format_money(snapshot.portfolio.cash_reserved)}",
+    ]
+
+    if not snapshot.open_positions:
+        lines.append("- Open positions: none")
+        return "\n".join(lines)
+
+    lines.append("- Open positions:")
+    for item in snapshot.open_positions:
+        position = item.position
+        lines.append(
+            f"  - Position #{position.id}: {position.symbol} {position.strategy_type} qty={position.quantity} opened={position.opened_at.isoformat()} notes={position.notes or 'none'}"
+        )
+        for leg in item.legs:
+            lines.append(f"    - Leg #{leg.id}: {_format_leg_summary(leg)}")
+        for event in item.recent_events:
+            lines.append(
+                f"    - Event: {event.event_type} at {event.occurred_at.isoformat()} notes={event.notes or 'none'}"
+            )
+
+    return "\n".join(lines)
+
+
+def _get_active_portfolio_flow(user_id: int, channel_id: int) -> PendingPortfolioFlow | None:
+    flow = _portfolio_flows.get(user_id)
+    if flow is None:
+        return None
+    if flow.channel_id != channel_id:
+        return None
+    if time.monotonic() - flow.created_at >= _FLOW_IDLE_TTL_SECONDS:
+        _portfolio_flows.pop(user_id, None)
+        return None
+    return flow
+
+
+def _set_portfolio_flow(user_id: int, flow: PendingPortfolioFlow) -> None:
+    flow.created_at = time.monotonic()
+    _portfolio_flows[user_id] = flow
+
+
+def _clear_portfolio_flow(user_id: int) -> None:
+    _portfolio_flows.pop(user_id, None)
 
 
 async def _handle_availability_command(message: discord.Message) -> None:
@@ -349,6 +485,235 @@ async def _handle_add_symbol_command(message: discord.Message, raw_symbol: str) 
     )
 
 
+async def _handle_portfolio_flow(message: discord.Message, flow: PendingPortfolioFlow) -> bool:
+    content = message.content.strip()
+    if content.lower() == "cancel":
+        _clear_portfolio_flow(message.author.id)
+        await message.reply("Cancelled portfolio entry.")
+        return True
+
+    flow.created_at = time.monotonic()
+
+    try:
+        if flow.action == "set_cash":
+            parts = content.split()
+            if len(parts) not in {1, 2}:
+                await message.reply("Reply with `available` or `available reserved`, or `cancel`.")
+                return True
+            available = _parse_decimal(parts[0], field_name="available cash")
+            reserved = _parse_decimal(parts[1], field_name="reserved cash") if len(parts) == 2 else Decimal("0")
+            portfolio = await asyncio.to_thread(
+                _get_portfolio_store().set_cash_balances,
+                discord_user_id=message.author.id,
+                username=message.author.name,
+                cash_available=available,
+                cash_reserved=reserved,
+            )
+            _clear_portfolio_flow(message.author.id)
+            await message.reply(
+                f"Updated cash for `{portfolio.name}`: available {_format_money(portfolio.cash_available)}, reserved {_format_money(portfolio.cash_reserved)}."
+            )
+            return True
+
+        if flow.action == "add_stock":
+            parts = content.split(maxsplit=3)
+            if len(parts) < 3:
+                await message.reply("Reply with `<ticker> <shares> <entry_price> [notes]`, or `cancel`.")
+                return True
+            symbol = _normalize_symbol(parts[0])
+            validation_error = _validate_command_symbol(symbol)
+            if validation_error is not None:
+                await message.reply(validation_error)
+                return True
+            if not await asyncio.to_thread(_is_symbol_tracked, symbol):
+                await message.reply(f"`{symbol}` is not in `symbol_availability`. Add it first so the bot can analyze it.")
+                return True
+            shares = _parse_positive_int(parts[1], field_name="shares")
+            entry_price = _parse_decimal(parts[2], field_name="entry price")
+            notes = parts[3] if len(parts) == 4 else None
+            position = await asyncio.to_thread(
+                _get_portfolio_store().add_stock_position,
+                discord_user_id=message.author.id,
+                username=message.author.name,
+                symbol=symbol,
+                shares=shares,
+                entry_price=entry_price,
+                notes=notes,
+            )
+            _clear_portfolio_flow(message.author.id)
+            await message.reply(f"Added stock position #{position.id} for `{symbol}`.")
+            return True
+
+        if flow.action == "add_option_header":
+            parts = content.split(maxsplit=2)
+            if len(parts) < 2:
+                await message.reply("Reply with `<ticker> <strategy_type> [notes]`, or `cancel`.")
+                return True
+            symbol = _normalize_symbol(parts[0])
+            validation_error = _validate_command_symbol(symbol)
+            if validation_error is not None:
+                await message.reply(validation_error)
+                return True
+            if not await asyncio.to_thread(_is_symbol_tracked, symbol):
+                await message.reply(f"`{symbol}` is not in `symbol_availability`. Add it first so the bot can analyze it.")
+                return True
+            flow.action = "add_option_legs"
+            flow.data = {
+                "symbol": symbol,
+                "strategy_type": parts[1].lower(),
+                "notes": parts[2] if len(parts) == 3 else None,
+                "legs": [],
+            }
+            await message.reply(
+                "Leg 1: reply with `<buy|sell> <call|put> <quantity> <strike> <expiration YYYY-MM-DD> <entry_price>`. "
+                "Send more legs using the same format, then send `done`."
+            )
+            return True
+
+        if flow.action == "add_option_legs":
+            if content.lower() == "done":
+                legs: list[OptionLegInput] = flow.data.get("legs", [])
+                if not legs:
+                    await message.reply("Add at least one leg before sending `done`.")
+                    return True
+                quantity = max(leg.quantity for leg in legs)
+                position = await asyncio.to_thread(
+                    _get_portfolio_store().add_option_position,
+                    discord_user_id=message.author.id,
+                    username=message.author.name,
+                    symbol=flow.data["symbol"],
+                    strategy_type=flow.data["strategy_type"],
+                    quantity=quantity,
+                    legs=legs,
+                    notes=flow.data.get("notes"),
+                )
+                _clear_portfolio_flow(message.author.id)
+                await message.reply(f"Added option position #{position.id} for `{flow.data['symbol']}`.")
+                return True
+
+            parts = content.split()
+            if len(parts) != 6:
+                await message.reply(
+                    "Reply with `<buy|sell> <call|put> <quantity> <strike> <expiration YYYY-MM-DD> <entry_price>`, `done`, or `cancel`."
+                )
+                return True
+            side = parts[0].lower()
+            option_type = parts[1].lower()
+            if side not in {"buy", "sell"} or option_type not in {"call", "put"}:
+                await message.reply("Leg side must be `buy` or `sell`, and option type must be `call` or `put`.")
+                return True
+            quantity = _parse_positive_int(parts[2], field_name="quantity")
+            strike = _parse_decimal(parts[3], field_name="strike")
+            expiration = datetime.fromisoformat(parts[4]).date()
+            entry_price = _parse_decimal(parts[5], field_name="entry price")
+            legs = flow.data.setdefault("legs", [])
+            legs.append(
+                OptionLegInput(
+                    side=side,
+                    quantity=quantity,
+                    option_type=option_type,
+                    strike=strike,
+                    expiration=expiration,
+                    entry_price=entry_price,
+                )
+            )
+            await message.reply(f"Added leg {len(legs)}. Send another leg or `done`.")
+            return True
+    except ValueError as exc:
+        await message.reply(str(exc))
+        return True
+    except Exception:
+        log.exception("Portfolio flow failed for action %s", flow.action)
+        _clear_portfolio_flow(message.author.id)
+        await message.reply("I couldn't complete that portfolio action. Start it again with a fresh command.")
+        return True
+
+    return False
+
+
+async def _handle_portfolio_command(message: discord.Message, raw_command: str) -> None:
+    parts = raw_command.split(maxsplit=2)
+
+    try:
+        if len(parts) == 1 or parts[1].lower() in {"summary", "positions"}:
+            snapshot = await asyncio.to_thread(
+                _get_portfolio_store().build_portfolio_snapshot,
+                discord_user_id=message.author.id,
+                username=message.author.name,
+            )
+            await _reply_to_message_chunked(message, _render_portfolio_summary(snapshot))
+            return
+
+        subcommand = parts[1].lower()
+        if subcommand == "set-cash":
+            _set_portfolio_flow(message.author.id, PendingPortfolioFlow(action="set_cash", channel_id=message.channel.id))
+            await message.reply("Reply with `available` or `available reserved`, or `cancel`.")
+            return
+
+        if subcommand == "add-stock":
+            _set_portfolio_flow(message.author.id, PendingPortfolioFlow(action="add_stock", channel_id=message.channel.id))
+            await message.reply("Reply with `<ticker> <shares> <entry_price> [notes]`, or `cancel`.")
+            return
+
+        if subcommand == "add-option":
+            _set_portfolio_flow(message.author.id, PendingPortfolioFlow(action="add_option_header", channel_id=message.channel.id))
+            await message.reply("Reply with `<ticker> <strategy_type> [notes]`, or `cancel`.")
+            return
+
+        if subcommand == "close":
+            if len(parts) < 3:
+                await message.reply("Usage: `portfolio close <position_id> [note]`")
+                return
+            close_parts = parts[2].split(maxsplit=1)
+            position_id = _parse_positive_int(close_parts[0], field_name="position id")
+            note = close_parts[1] if len(close_parts) == 2 else None
+            position = await asyncio.to_thread(
+                _get_portfolio_store().close_position,
+                discord_user_id=message.author.id,
+                username=message.author.name,
+                position_id=position_id,
+                notes=note,
+            )
+            if position is None:
+                await message.reply(f"Open position `{position_id}` was not found in your portfolio.")
+                return
+            await message.reply(f"Closed position #{position.id} for `{position.symbol}`.")
+            return
+
+        if subcommand == "note":
+            if len(parts) < 3:
+                await message.reply("Usage: `portfolio note <position_id> <note>`")
+                return
+            note_parts = parts[2].split(maxsplit=1)
+            if len(note_parts) != 2:
+                await message.reply("Usage: `portfolio note <position_id> <note>`")
+                return
+            position_id = _parse_positive_int(note_parts[0], field_name="position id")
+            updated = await asyncio.to_thread(
+                _get_portfolio_store().add_position_note,
+                discord_user_id=message.author.id,
+                username=message.author.name,
+                position_id=position_id,
+                notes=note_parts[1],
+            )
+            if not updated:
+                await message.reply(f"Position `{position_id}` was not found in your portfolio.")
+                return
+            await message.reply(f"Saved note on position #{position_id}.")
+            return
+    except ValueError as exc:
+        await message.reply(str(exc))
+        return
+    except Exception:
+        log.exception("Portfolio command failed for user %d", message.author.id)
+        await message.reply("I couldn't update your portfolio right now.")
+        return
+
+    await message.reply(
+        "Portfolio commands: `portfolio`, `portfolio set-cash`, `portfolio add-stock`, `portfolio add-option`, `portfolio close`, `portfolio note`."
+    )
+
+
 async def _maybe_handle_command(message: discord.Message, prompt: str) -> bool:
     command, _, remainder = prompt.partition(" ")
     normalized = command.lower()
@@ -363,6 +728,10 @@ async def _maybe_handle_command(message: discord.Message, prompt: str) -> bool:
 
     if normalized == "add":
         await _handle_add_symbol_command(message, remainder)
+        return True
+
+    if normalized == "portfolio":
+        await _handle_portfolio_command(message, prompt)
         return True
 
     return False
@@ -447,6 +816,15 @@ async def _expire_idle_sessions() -> None:
         log.info("Expiring idle session for user %d after %.0f seconds", user_id, _SESSION_IDLE_TTL_SECONDS)
         await _disconnect_session(user_id)
 
+    expired_flow_user_ids = [
+        user_id
+        for user_id, flow in _portfolio_flows.items()
+        if now - flow.created_at >= _FLOW_IDLE_TTL_SECONDS
+    ]
+    for user_id in expired_flow_user_ids:
+        log.info("Expiring portfolio flow for user %d after %.0f seconds", user_id, _FLOW_IDLE_TTL_SECONDS)
+        _clear_portfolio_flow(user_id)
+
 
 async def _session_cleanup_loop() -> None:
     """Periodically expire idle user sessions."""
@@ -491,6 +869,11 @@ async def on_message(message: discord.Message) -> None:
     if not _is_allowed_channel(message.channel.id):
         return
 
+    pending_flow = _get_active_portfolio_flow(message.author.id, message.channel.id)
+    if pending_flow is not None and not _is_targeted(message):
+        if await _handle_portfolio_flow(message, pending_flow):
+            return
+
     if not _is_targeted(message):
         return
 
@@ -502,13 +885,26 @@ async def on_message(message: discord.Message) -> None:
     if await _maybe_handle_command(message, prompt):
         return
 
+    portfolio_context = ""
+    try:
+        snapshot = await asyncio.to_thread(
+            _get_portfolio_store().build_portfolio_snapshot,
+            discord_user_id=message.author.id,
+            username=message.author.name,
+        )
+        portfolio_context = _build_portfolio_context(snapshot)
+    except Exception:
+        log.exception("Failed to load portfolio context for user %d", message.author.id)
+
+    request_prompt = prompt if not portfolio_context else f"{portfolio_context}\n\nUser request:\n{prompt}"
+
     entry = await _get_or_create_user_session(message.author.id, message.channel.id)
 
     async with entry.lock:
         entry.last_used_at = time.monotonic()
         try:
             response_event = await entry.session.send_and_wait(
-                {"prompt": prompt},
+                {"prompt": request_prompt},
                 timeout=_SESSION_RESPONSE_TIMEOUT_SECONDS,
             )
             entry.last_used_at = time.monotonic()
