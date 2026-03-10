@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import discord
+from discord import app_commands
 from copilot import CopilotClient, PermissionHandler
 from dotenv import load_dotenv
 from swing_agent_database import (
@@ -141,6 +142,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 discord_client = discord.Client(intents=intents)
+command_tree = app_commands.CommandTree(discord_client)
 copilot_client = CopilotClient()
 _symbol_availability_store: SymbolAvailabilityStore | None = None
 _portfolio_store: PortfolioStore | None = None
@@ -165,6 +167,7 @@ class PendingPortfolioFlow:
 _user_sessions: dict[int, UserSessionEntry] = {}
 _session_cleanup_task: asyncio.Task | None = None
 _portfolio_flows: dict[int, PendingPortfolioFlow] = {}
+_portfolio_view_messages: dict[int, int] = {}
 
 
 def _strip_mention(content: str, bot_user: discord.ClientUser) -> str:
@@ -395,6 +398,460 @@ def _set_portfolio_flow(user_id: int, flow: PendingPortfolioFlow) -> None:
 
 def _clear_portfolio_flow(user_id: int) -> None:
     _portfolio_flows.pop(user_id, None)
+
+
+def _build_portfolio_panel_content(snapshot: PortfolioSnapshot) -> str:
+    lines = [
+        f"Portfolio `{snapshot.portfolio.name}`",
+        f"Cash available: {_format_money(snapshot.portfolio.cash_available)}",
+        f"Cash reserved: {_format_money(snapshot.portfolio.cash_reserved)}",
+        "",
+        "Positions:",
+    ]
+
+    if not snapshot.open_positions:
+        lines.append("- none")
+        lines.append("")
+        lines.append("Use the buttons below to open modals for cash and position entry, or confirm the portfolio for analysis.")
+        return "\n".join(lines)
+
+    for item in snapshot.open_positions:
+        position = item.position
+        lines.append(
+            f"- #{position.id} {position.symbol} | {position.strategy_type} | qty {position.quantity} | opened {position.opened_at.date().isoformat()}"
+        )
+        for leg in item.legs:
+            lines.append(f"  {_format_leg_summary(leg)}")
+
+    lines.append("")
+    lines.append("Use the buttons below to open modals for edits, log exits, refresh the panel, or confirm the portfolio for analysis.")
+    return "\n".join(lines)
+
+
+def _is_empty_portfolio(snapshot: PortfolioSnapshot) -> bool:
+    return (
+        not snapshot.open_positions
+        and snapshot.portfolio.cash_available == Decimal("0")
+        and snapshot.portfolio.cash_reserved == Decimal("0")
+    )
+
+
+def _build_request_prompt_for_user(user_id: int, username: str | None, prompt: str) -> str:
+    snapshot = _get_portfolio_store().build_portfolio_snapshot(
+        discord_user_id=user_id,
+        username=username,
+    )
+    portfolio_context = _build_portfolio_context(snapshot)
+    if not portfolio_context:
+        return prompt
+    return f"{portfolio_context}\n\nUser request:\n{prompt}"
+
+
+async def _run_recommendation_request(
+    *,
+    user_id: int,
+    username: str | None,
+    channel_id: int,
+    prompt: str,
+) -> str:
+    request_prompt = await asyncio.to_thread(_build_request_prompt_for_user, user_id, username, prompt)
+    entry = await _get_or_create_user_session(user_id, channel_id)
+
+    async with entry.lock:
+        entry.last_used_at = time.monotonic()
+        response_event = await entry.session.send_and_wait(
+            {"prompt": request_prompt},
+            timeout=_SESSION_RESPONSE_TIMEOUT_SECONDS,
+        )
+        entry.last_used_at = time.monotonic()
+        return _extract_response_text(response_event)
+
+
+def _parse_option_legs(raw_value: str) -> list[OptionLegInput]:
+    legs: list[OptionLegInput] = []
+    for raw_line in raw_value.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) != 6:
+            raise ValueError(
+                "Each option leg must use `<buy|sell> <call|put> <quantity> <strike> <expiration YYYY-MM-DD> <entry_price>`."
+            )
+        side = parts[0].lower()
+        option_type = parts[1].lower()
+        if side not in {"buy", "sell"} or option_type not in {"call", "put"}:
+            raise ValueError("Option legs must use `buy|sell` and `call|put`.")
+        quantity = _parse_positive_int(parts[2], field_name="quantity")
+        strike = _parse_decimal(parts[3], field_name="strike")
+        expiration = datetime.fromisoformat(parts[4]).date()
+        entry_price = _parse_decimal(parts[5], field_name="entry price")
+        legs.append(
+            OptionLegInput(
+                side=side,
+                quantity=quantity,
+                option_type=option_type,
+                strike=strike,
+                expiration=expiration,
+                entry_price=entry_price,
+            )
+        )
+    if not legs:
+        raise ValueError("Enter at least one option leg.")
+    return legs
+
+
+async def _refresh_portfolio_panel(interaction: discord.Interaction, view: "PortfolioPanelView") -> None:
+    snapshot = await asyncio.to_thread(
+        _get_portfolio_store().build_portfolio_snapshot,
+        discord_user_id=view.owner_user_id,
+        username=view.owner_username,
+    )
+    refreshed_view = PortfolioPanelView(
+        owner_user_id=view.owner_user_id,
+        owner_username=view.owner_username,
+        channel_id=view.channel_id,
+        snapshot=snapshot,
+    )
+    await interaction.response.edit_message(
+        content=_build_portfolio_panel_content(snapshot),
+        view=refreshed_view,
+    )
+
+
+async def _respond_with_portfolio_panel(
+    interaction: discord.Interaction,
+    *,
+    owner_user_id: int,
+    owner_username: str | None,
+    channel_id: int,
+    edit_existing: bool,
+) -> None:
+    log.info(
+        "Rendering portfolio panel for user=%s channel=%s edit_existing=%s",
+        owner_user_id,
+        channel_id,
+        edit_existing,
+    )
+    snapshot = await asyncio.to_thread(
+        _get_portfolio_store().build_portfolio_snapshot,
+        discord_user_id=owner_user_id,
+        username=owner_username,
+    )
+    view = PortfolioPanelView(
+        owner_user_id=owner_user_id,
+        owner_username=owner_username,
+        channel_id=channel_id,
+        snapshot=snapshot,
+    )
+    content = _build_portfolio_panel_content(snapshot)
+    if edit_existing:
+        await interaction.response.edit_message(content=content, view=view)
+        return
+    await interaction.response.send_message(content, view=view)
+
+
+async def _send_portfolio_panel_message(
+    message: discord.Message,
+    *,
+    owner_user_id: int,
+    owner_username: str | None,
+) -> None:
+    snapshot = await asyncio.to_thread(
+        _get_portfolio_store().build_portfolio_snapshot,
+        discord_user_id=owner_user_id,
+        username=owner_username,
+    )
+    view = PortfolioPanelView(
+        owner_user_id=owner_user_id,
+        owner_username=owner_username,
+        channel_id=message.channel.id,
+        snapshot=snapshot,
+    )
+    await message.reply(_build_portfolio_panel_content(snapshot), view=view)
+
+
+async def _open_setup_modal_or_fallback(
+    interaction: discord.Interaction,
+    *,
+    view: "PortfolioPanelView",
+    title: str,
+    edit_existing_message: bool,
+) -> None:
+    log.info(
+        "Attempting portfolio modal launch for user=%s channel=%s title=%s edit_existing=%s",
+        view.owner_user_id,
+        view.channel_id,
+        title,
+        edit_existing_message,
+    )
+    try:
+        await interaction.response.send_modal(
+            SetCashModal(
+                view=view,
+                title=title,
+                edit_existing_message=edit_existing_message,
+            )
+        )
+        log.info("Portfolio modal launch sent for user=%s", view.owner_user_id)
+    except Exception:
+        log.exception("Portfolio modal launch failed for user=%s; falling back to panel", view.owner_user_id)
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "I couldn't open the setup modal directly. Use the portfolio panel buttons instead.",
+                view=view,
+            )
+            return
+        await interaction.response.send_message(
+            "I couldn't open the setup modal directly. Use the portfolio panel buttons instead.",
+            view=view,
+        )
+
+
+class PortfolioActionModal(discord.ui.Modal):
+    def __init__(self, *, title: str, view: "PortfolioPanelView", edit_existing_message: bool = True) -> None:
+        super().__init__(title=title)
+        self.portfolio_view = view
+        self.edit_existing_message = edit_existing_message
+
+
+class SetCashModal(PortfolioActionModal):
+    available = discord.ui.TextInput(label="Cash available", required=True, placeholder="25000")
+    reserved = discord.ui.TextInput(label="Cash reserved", required=False, placeholder="5000")
+
+    def __init__(self, *, view: "PortfolioPanelView", title: str = "Set Portfolio Cash", edit_existing_message: bool = True) -> None:
+        super().__init__(title=title, view=view, edit_existing_message=edit_existing_message)
+        self.available.default = f"{view.snapshot.portfolio.cash_available:.2f}"
+        self.reserved.default = f"{view.snapshot.portfolio.cash_reserved:.2f}"
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            available = _parse_decimal(str(self.available), field_name="cash available")
+            reserved_value = str(self.reserved).strip()
+            reserved = Decimal("0") if not reserved_value else _parse_decimal(reserved_value, field_name="cash reserved")
+            await asyncio.to_thread(
+                _get_portfolio_store().set_cash_balances,
+                discord_user_id=self.portfolio_view.owner_user_id,
+                username=self.portfolio_view.owner_username,
+                cash_available=available,
+                cash_reserved=reserved,
+            )
+            await _respond_with_portfolio_panel(
+                interaction,
+                owner_user_id=self.portfolio_view.owner_user_id,
+                owner_username=self.portfolio_view.owner_username,
+                channel_id=self.portfolio_view.channel_id,
+                edit_existing=self.edit_existing_message,
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class AddStockModal(PortfolioActionModal):
+    symbol = discord.ui.TextInput(label="Ticker", required=True, placeholder="NVDA")
+    shares = discord.ui.TextInput(label="Shares", required=True, placeholder="100")
+    entry_price = discord.ui.TextInput(label="Entry price", required=True, placeholder="118.45")
+    notes = discord.ui.TextInput(label="Notes", required=False, style=discord.TextStyle.paragraph)
+
+    def __init__(self, *, view: "PortfolioPanelView", edit_existing_message: bool = True) -> None:
+        super().__init__(title="Add Stock Position", view=view, edit_existing_message=edit_existing_message)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            symbol = _normalize_symbol(str(self.symbol))
+            validation_error = _validate_command_symbol(symbol)
+            if validation_error is not None:
+                raise ValueError(validation_error)
+            is_tracked = await asyncio.to_thread(_is_symbol_tracked, symbol)
+            if not is_tracked:
+                raise ValueError(f"`{symbol}` is not in `symbol_availability`. Add it first so the bot can analyze it.")
+            shares = _parse_positive_int(str(self.shares), field_name="shares")
+            entry_price = _parse_decimal(str(self.entry_price), field_name="entry price")
+            notes = str(self.notes).strip() or None
+            await asyncio.to_thread(
+                _get_portfolio_store().add_stock_position,
+                discord_user_id=self.portfolio_view.owner_user_id,
+                username=self.portfolio_view.owner_username,
+                symbol=symbol,
+                shares=shares,
+                entry_price=entry_price,
+                notes=notes,
+            )
+            await _respond_with_portfolio_panel(
+                interaction,
+                owner_user_id=self.portfolio_view.owner_user_id,
+                owner_username=self.portfolio_view.owner_username,
+                channel_id=self.portfolio_view.channel_id,
+                edit_existing=self.edit_existing_message,
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class AddOptionModal(PortfolioActionModal):
+    symbol = discord.ui.TextInput(label="Ticker", required=True, placeholder="PLTR")
+    strategy_type = discord.ui.TextInput(label="Strategy type", required=True, placeholder="csp")
+    legs = discord.ui.TextInput(
+        label="Legs",
+        required=True,
+        style=discord.TextStyle.paragraph,
+        placeholder="sell put 1 80 2026-04-17 2.15",
+    )
+    notes = discord.ui.TextInput(label="Notes", required=False, style=discord.TextStyle.paragraph)
+
+    def __init__(self, *, view: "PortfolioPanelView", edit_existing_message: bool = True) -> None:
+        super().__init__(title="Add Option Position", view=view, edit_existing_message=edit_existing_message)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            symbol = _normalize_symbol(str(self.symbol))
+            validation_error = _validate_command_symbol(symbol)
+            if validation_error is not None:
+                raise ValueError(validation_error)
+            is_tracked = await asyncio.to_thread(_is_symbol_tracked, symbol)
+            if not is_tracked:
+                raise ValueError(f"`{symbol}` is not in `symbol_availability`. Add it first so the bot can analyze it.")
+            legs = _parse_option_legs(str(self.legs))
+            strategy_type = str(self.strategy_type).strip().lower()
+            notes = str(self.notes).strip() or None
+            quantity = max(leg.quantity for leg in legs)
+            await asyncio.to_thread(
+                _get_portfolio_store().add_option_position,
+                discord_user_id=self.portfolio_view.owner_user_id,
+                username=self.portfolio_view.owner_username,
+                symbol=symbol,
+                strategy_type=strategy_type,
+                quantity=quantity,
+                legs=legs,
+                notes=notes,
+            )
+            await _respond_with_portfolio_panel(
+                interaction,
+                owner_user_id=self.portfolio_view.owner_user_id,
+                owner_username=self.portfolio_view.owner_username,
+                channel_id=self.portfolio_view.channel_id,
+                edit_existing=self.edit_existing_message,
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class ExitPositionModal(PortfolioActionModal):
+    exit_price = discord.ui.TextInput(label="Exit price", required=True, placeholder="3.25")
+    notes = discord.ui.TextInput(label="Notes", required=False, style=discord.TextStyle.paragraph)
+
+    def __init__(self, *, view: "PortfolioPanelView", position_id: int, symbol: str, edit_existing_message: bool = True) -> None:
+        super().__init__(title=f"Exit {symbol} #{position_id}", view=view, edit_existing_message=edit_existing_message)
+        self.position_id = position_id
+        self.symbol = symbol
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            exit_price = _parse_decimal(str(self.exit_price), field_name="exit price")
+            notes = str(self.notes).strip() or None
+            position = await asyncio.to_thread(
+                _get_portfolio_store().close_position,
+                discord_user_id=self.portfolio_view.owner_user_id,
+                username=self.portfolio_view.owner_username,
+                position_id=self.position_id,
+                exit_price=exit_price,
+                notes=notes,
+            )
+            if position is None:
+                raise ValueError(f"Position `{self.position_id}` is no longer open.")
+            await _respond_with_portfolio_panel(
+                interaction,
+                owner_user_id=self.portfolio_view.owner_user_id,
+                owner_username=self.portfolio_view.owner_username,
+                channel_id=self.portfolio_view.channel_id,
+                edit_existing=self.edit_existing_message,
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class ExitPositionButton(discord.ui.Button):
+    def __init__(self, *, position_id: int, symbol: str, row: int) -> None:
+        super().__init__(label=f"Exit #{position_id}", style=discord.ButtonStyle.danger, row=row)
+        self.position_id = position_id
+        self.symbol = symbol
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, PortfolioPanelView):
+            await interaction.response.send_message("The portfolio panel is no longer active.", ephemeral=True)
+            return
+        await interaction.response.send_modal(
+            ExitPositionModal(view=view, position_id=self.position_id, symbol=self.symbol)
+        )
+
+
+class PortfolioPanelView(discord.ui.View):
+    def __init__(
+        self,
+        *,
+        owner_user_id: int,
+        owner_username: str | None,
+        channel_id: int,
+        snapshot: PortfolioSnapshot,
+    ) -> None:
+        super().__init__(timeout=15 * 60)
+        self.owner_user_id = owner_user_id
+        self.owner_username = owner_username
+        self.channel_id = channel_id
+        self.snapshot = snapshot
+        self._add_exit_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("This portfolio panel belongs to another user.", ephemeral=True)
+            return False
+        return True
+
+    def _add_exit_buttons(self) -> None:
+        max_positions = 20
+        for index, item in enumerate(self.snapshot.open_positions[:max_positions]):
+            row = 1 + (index // 5)
+            self.add_item(ExitPositionButton(position_id=item.position.id, symbol=item.position.symbol, row=row))
+
+    @discord.ui.button(label="Set Cash", style=discord.ButtonStyle.secondary, row=0)
+    async def set_cash(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await _open_setup_modal_or_fallback(
+            interaction,
+            view=self,
+            title="Set Portfolio Cash",
+            edit_existing_message=True,
+        )
+
+    @discord.ui.button(label="Add Stock", style=discord.ButtonStyle.secondary, row=0)
+    async def add_stock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(AddStockModal(view=self))
+
+    @discord.ui.button(label="Add Option", style=discord.ButtonStyle.secondary, row=0)
+    async def add_option(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(AddOptionModal(view=self))
+
+    @discord.ui.button(label="Confirm Portfolio", style=discord.ButtonStyle.primary, row=0)
+    async def confirm_portfolio(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.defer(thinking=True)
+        try:
+            response_text = await _run_recommendation_request(
+                user_id=self.owner_user_id,
+                username=self.owner_username,
+                channel_id=self.channel_id,
+                prompt=(
+                    "I confirm this is my current portfolio. Analyze my holdings, cash, and current market indicators. "
+                    "Tell me what to close, what to roll or manage, what to leave alone, and what new income trades to open next."
+                ),
+            )
+            await _send_followup_chunked(interaction, response_text)
+        except Exception:
+            log.exception("Portfolio confirmation analysis failed for user %d", self.owner_user_id)
+            await interaction.followup.send("I couldn't analyze the confirmed portfolio cleanly. Try again.", ephemeral=True)
+
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, row=0)
+    async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await _refresh_portfolio_panel(interaction, self)
 
 
 async def _handle_availability_command(message: discord.Message) -> None:
@@ -636,12 +1093,11 @@ async def _handle_portfolio_command(message: discord.Message, raw_command: str) 
 
     try:
         if len(parts) == 1 or parts[1].lower() in {"summary", "positions"}:
-            snapshot = await asyncio.to_thread(
-                _get_portfolio_store().build_portfolio_snapshot,
-                discord_user_id=message.author.id,
-                username=message.author.name,
+            await _send_portfolio_panel_message(
+                message,
+                owner_user_id=message.author.id,
+                owner_username=message.author.name,
             )
-            await _reply_to_message_chunked(message, _render_portfolio_summary(snapshot))
             return
 
         subcommand = parts[1].lower()
@@ -716,7 +1172,7 @@ async def _handle_portfolio_command(message: discord.Message, raw_command: str) 
 
 async def _maybe_handle_command(message: discord.Message, prompt: str) -> bool:
     command, _, remainder = prompt.partition(" ")
-    normalized = command.lower()
+    normalized = command.lower().lstrip("/")
 
     if normalized in {"availability", "freshness", "symbols"}:
         await _handle_availability_command(message)
@@ -768,16 +1224,58 @@ async def _create_session(channel_id: int):
     return session
 
 
+def _split_discord_response(text: str) -> list[str]:
+    normalized = text.strip()
+    if not normalized:
+        return ["I didn't get a usable response from the session."]
+
+    strategy_pattern = re.compile(
+        r"(?=^Trade\s+\d+:|^Current positions:|^Summary:|^Rejected:|^Portfolio:)",
+        flags=re.MULTILINE,
+    )
+    candidate_parts = [part.strip() for part in strategy_pattern.split(normalized) if part.strip()]
+
+    if not candidate_parts:
+        candidate_parts = [normalized]
+
+    chunks: list[str] = []
+    current = ""
+    for part in candidate_parts:
+        separator = "\n\n" if current else ""
+        if len(part) > _DISCORD_MAX_CHARS:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(part), _DISCORD_MAX_CHARS):
+                chunks.append(part[i : i + _DISCORD_MAX_CHARS])
+            continue
+        if len(current) + len(separator) + len(part) <= _DISCORD_MAX_CHARS:
+            current = f"{current}{separator}{part}" if current else part
+        else:
+            chunks.append(current)
+            current = part
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
 async def _reply_to_message_chunked(message: discord.Message, text: str) -> None:
-    """Reply to the original Discord message with chunked output."""
+    """Reply to the original Discord message with strategy-aware chunked output."""
     first = True
-    for i in range(0, len(text), _DISCORD_MAX_CHARS):
-        chunk = text[i : i + _DISCORD_MAX_CHARS]
+    for chunk in _split_discord_response(text):
         if first:
             await message.reply(chunk)
             first = False
         else:
             await message.channel.send(chunk)
+
+
+async def _send_followup_chunked(interaction: discord.Interaction, text: str) -> None:
+    """Send strategy-aware follow-up output for interactions."""
+    for chunk in _split_discord_response(text):
+        await interaction.followup.send(chunk)
 
 
 async def _disconnect_session(user_id: int) -> None:
@@ -846,11 +1344,46 @@ def _extract_response_text(response_event) -> str:
     return "I didn't get a usable response from the session."
 
 
+@command_tree.command(name="portfolio", description="Open the interactive portfolio panel")
+async def portfolio_command(interaction: discord.Interaction) -> None:
+    if not _is_allowed_channel(interaction.channel_id):
+        await interaction.response.send_message("This command is not enabled in this channel.", ephemeral=True)
+        return
+
+    snapshot = await asyncio.to_thread(
+        _get_portfolio_store().build_portfolio_snapshot,
+        discord_user_id=interaction.user.id,
+        username=interaction.user.name,
+    )
+    view = PortfolioPanelView(
+        owner_user_id=interaction.user.id,
+        owner_username=interaction.user.name,
+        channel_id=interaction.channel_id,
+        snapshot=snapshot,
+    )
+    log.info(
+        "Received /portfolio interaction for user=%s channel=%s",
+        interaction.user.id,
+        interaction.channel_id,
+    )
+    await _open_setup_modal_or_fallback(
+        interaction,
+        view=view,
+        title="Portfolio Setup",
+        edit_existing_message=False,
+    )
+
+
 @discord_client.event
 async def on_ready() -> None:
     global _session_cleanup_task
 
     await copilot_client.start()
+    try:
+        synced_commands = await command_tree.sync()
+        log.info("Synced %d Discord app commands", len(synced_commands))
+    except Exception:
+        log.exception("Failed to sync Discord app commands")
     if _session_cleanup_task is None or _session_cleanup_task.done():
         _session_cleanup_task = asyncio.create_task(_session_cleanup_loop())
     log.info("Logged in as %s | Copilot client connected", discord_client.user)
@@ -885,36 +1418,20 @@ async def on_message(message: discord.Message) -> None:
     if await _maybe_handle_command(message, prompt):
         return
 
-    portfolio_context = ""
     try:
-        snapshot = await asyncio.to_thread(
-            _get_portfolio_store().build_portfolio_snapshot,
-            discord_user_id=message.author.id,
+        response_text = await _run_recommendation_request(
+            user_id=message.author.id,
             username=message.author.name,
+            channel_id=message.channel.id,
+            prompt=prompt,
         )
-        portfolio_context = _build_portfolio_context(snapshot)
+        await _reply_to_message_chunked(message, response_text)
     except Exception:
-        log.exception("Failed to load portfolio context for user %d", message.author.id)
-
-    request_prompt = prompt if not portfolio_context else f"{portfolio_context}\n\nUser request:\n{prompt}"
-
-    entry = await _get_or_create_user_session(message.author.id, message.channel.id)
-
-    async with entry.lock:
-        entry.last_used_at = time.monotonic()
-        try:
-            response_event = await entry.session.send_and_wait(
-                {"prompt": request_prompt},
-                timeout=_SESSION_RESPONSE_TIMEOUT_SECONDS,
-            )
-            entry.last_used_at = time.monotonic()
-            await _reply_to_message_chunked(message, _extract_response_text(response_event))
-        except Exception:
-            log.exception("Session request failed for user %d in channel %d", message.author.id, message.channel.id)
-            await _disconnect_session(message.author.id)
-            await message.reply(
-                "I couldn't finish that request cleanly. Please mention me again to start a fresh session."
-            )
+        log.exception("Session request failed for user %d in channel %d", message.author.id, message.channel.id)
+        await _disconnect_session(message.author.id)
+        await message.reply(
+            "I couldn't finish that request cleanly. Please mention me again to start a fresh session."
+        )
 
 
 @discord_client.event

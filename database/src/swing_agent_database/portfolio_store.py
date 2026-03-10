@@ -327,9 +327,11 @@ class PortfolioStore:
         discord_user_id: int,
         username: str | None,
         position_id: int,
+        exit_price: Decimal | int | float | str | None = None,
         notes: str | None = None,
     ) -> PositionRecord | None:
         timestamp = datetime.now(tz=UTC)
+        normalized_exit_price = None if exit_price is None else _to_decimal(exit_price)
         with self.session() as session, session.begin():
             self._get_or_create_user(session, discord_user_id=discord_user_id, username=username)
             position = self._get_open_position_for_user(session, discord_user_id=discord_user_id, position_id=position_id)
@@ -346,7 +348,12 @@ class PortfolioStore:
                 update(self._position_legs)
                 .where(self._position_legs.c.position_id == position_id)
                 .where(self._position_legs.c.status == "open")
-                .values(status="closed", closed_at=timestamp, updated_at=timestamp)
+                .values(
+                    status="closed",
+                    closed_at=timestamp,
+                    exit_price=normalized_exit_price,
+                    updated_at=timestamp,
+                )
             )
             self._insert_trade_event(
                 session,
@@ -355,6 +362,7 @@ class PortfolioStore:
                 event_type="close",
                 occurred_at=timestamp,
                 notes=notes or "Closed via Discord bot",
+                details={} if normalized_exit_price is None else {"exit_price": str(normalized_exit_price)},
             )
         return PositionRecord(**dict(position_row))
 
