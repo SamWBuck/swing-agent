@@ -26,3 +26,11 @@ services:
     env_file:
       - ../.env
     restart: unless-stopped
+
+  schwab-price-sync:
+    build:
+      context: ..
+      dockerfile: services/schwab-price-sync/Dockerfile
+    env_file:
+      - ../.env
+    restart: unless-stopped

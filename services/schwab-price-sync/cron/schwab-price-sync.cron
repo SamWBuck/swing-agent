@@ -1,0 +1,5 @@
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+* * * * * root /app/cron/run_missing_sync.sh
+0 * * * * root /app/cron/run_hourly_sync.sh
