@@ -78,6 +78,13 @@ class PriceStoreSettings:
     max_limit: int
 
 
+@dataclass(frozen=True)
+class SymbolAvailabilitySettings:
+    database_url: str
+    schema_name: str
+    table_name: str
+
+
 def load_price_store_settings(*, consumer_name: str = "price-data-mcp") -> PriceStoreSettings:
     return PriceStoreSettings(
         database_url=build_database_url(consumer_name=consumer_name),
@@ -93,4 +100,12 @@ def load_price_store_settings(*, consumer_name: str = "price-data-mcp") -> Price
         volume_column=os.getenv("PRICE_CANDLES_VOLUME_COLUMN", "volume"),
         default_limit=_env_int("PRICE_DATA_DEFAULT_LIMIT", 200),
         max_limit=_env_int("PRICE_DATA_MAX_LIMIT", 5000),
+    )
+
+
+def load_symbol_availability_settings(*, consumer_name: str = "service") -> SymbolAvailabilitySettings:
+    return SymbolAvailabilitySettings(
+        database_url=build_database_url(consumer_name=consumer_name),
+        schema_name=os.getenv("SYMBOL_AVAILABILITY_SCHEMA", "public"),
+        table_name=os.getenv("SYMBOL_AVAILABILITY_TABLE", "symbol_availability"),
     )
