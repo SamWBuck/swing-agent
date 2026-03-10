@@ -38,6 +38,11 @@ def _parse_args() -> argparse.Namespace:
         help="Only process symbols whose selected interval timestamps are still null in symbol_availability",
     )
     parser.add_argument(
+        "--stale-only",
+        action="store_true",
+        help="Only sync selected intervals when latest timestamp is missing or older than the interval freshness window",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -59,6 +64,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         intervals=args.intervals,
         limit=args.limit,
         missing_only=args.missing_only,
+        stale_only=args.stale_only,
     )
     logging.getLogger(__name__).info(
         "Sync complete: symbols=%d intervals=%d fetched=%d written=%d",

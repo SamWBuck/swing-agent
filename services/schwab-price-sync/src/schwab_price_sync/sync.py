@@ -39,6 +39,17 @@ INTERVAL_SPECS: dict[str, IntervalSpec] = {
 }
 
 
+INTERVAL_FRESHNESS: dict[str, timedelta] = {
+    "1m": timedelta(minutes=1),
+    "5m": timedelta(minutes=5),
+    "10m": timedelta(minutes=10),
+    "15m": timedelta(minutes=15),
+    "30m": timedelta(minutes=30),
+    "1d": timedelta(days=1),
+    "1w": timedelta(weeks=1),
+}
+
+
 def _subtract_months(value: datetime, months: int) -> datetime:
     month = value.month - months
     year = value.year
@@ -147,6 +158,7 @@ async def sync_symbols(
     intervals: list[str] | None = None,
     limit: int | None = None,
     missing_only: bool = False,
+    stale_only: bool = False,
 ) -> SyncResult:
     selected_specs = [INTERVAL_SPECS[name] for name in (intervals or list(INTERVAL_SPECS))]
     targets = repository.list_symbol_availability(
@@ -162,6 +174,17 @@ async def sync_symbols(
         result.symbols_processed += 1
         for spec in selected_specs:
             latest_ts = getattr(target, spec.latest_attr)
+            if stale_only and latest_ts is not None:
+                latest_utc = _ensure_utc(latest_ts)
+                if now - latest_utc <= INTERVAL_FRESHNESS[spec.interval]:
+                    log.info(
+                        "Skipping %s %s: latest=%s is still within freshness window %s",
+                        target.symbol,
+                        spec.interval,
+                        latest_ts,
+                        INTERVAL_FRESHNESS[spec.interval],
+                    )
+                    continue
             try:
                 candles = await _fetch_interval_candles(client, settings, target.symbol, spec, latest_ts, now)
             except Exception:
