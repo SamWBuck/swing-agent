@@ -5,16 +5,28 @@ from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
-from .analysis import (
-    calculate_support_resistance,
-    compute_all_indicators,
-    compute_selected_indicators,
-    frame_from_records,
-    indicator_catalog,
-    serialize_frame,
-)
-from .config import load_settings
-from .db import PriceStore
+try:
+    from .analysis import (
+        calculate_support_resistance,
+        compute_all_indicators,
+        compute_selected_indicators,
+        frame_from_records,
+        indicator_catalog,
+        serialize_frame,
+    )
+    from .config import load_settings
+    from .db import PriceStore
+except ImportError:
+    from price_data_mcp.analysis import (
+        calculate_support_resistance,
+        compute_all_indicators,
+        compute_selected_indicators,
+        frame_from_records,
+        indicator_catalog,
+        serialize_frame,
+    )
+    from price_data_mcp.config import load_settings
+    from price_data_mcp.db import PriceStore
 
 
 settings = load_settings()
@@ -197,7 +209,7 @@ def summarize_market_data(
 
 
 def main() -> None:
-    mcp.run()
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":

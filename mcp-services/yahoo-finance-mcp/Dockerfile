@@ -1,23 +1,20 @@
-FROM node:20-bookworm-slim
+FROM ghcr.io/astral-sh/uv:latest AS uv
+FROM python:3.12-slim-bookworm
+COPY --from=uv /uv /usr/local/bin/uv
 
-RUN apt-get update && apt-get install -y git python3 python3-pip python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/Alex2Yang97/yahoo-finance-mcp.git /app
 
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH" \
-    PYTHONPATH="/app"
-
-RUN pip install --no-cache-dir -e /app
-
-RUN printf '#!/bin/sh\nexec /opt/venv/bin/python /app/server.py\n' > /usr/local/bin/yahoo-finance-mcp \
-    && chmod +x /usr/local/bin/yahoo-finance-mcp
-
-RUN npm install -g supergateway
-
 WORKDIR /app
+
+RUN uv venv /app/.venv \
+	&& uv pip install --python /app/.venv/bin/python -e .
+
+RUN uv add fastmcp
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8809
 
-CMD ["supergateway", "--port", "8809", "--stdio", "yahoo-finance-mcp", "--outputTransport", "streamableHttp", "--streamableHttpPath", "/mcp", "--stateful"]
+CMD ["uv", "run", "fastmcp", "run", "server.py:yfinance_server", "--transport", "http", "--host", "0.0.0.0", "--port", "8809"]
