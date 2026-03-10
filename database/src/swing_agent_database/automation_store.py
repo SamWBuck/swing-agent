@@ -98,6 +98,32 @@ class AutomationDecisionRecord:
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class AutomationActionIntentRecord:
+    id: int
+    run_id: int
+    action_index: int
+    action_type: str
+    symbol: str | None
+    strategy_type: str | None
+    status: str
+    confidence: str | None
+    quantity: int | None
+    option_type: str | None
+    expiration_date: datetime | None
+    strike_price: Decimal | None
+    limit_price: Decimal | None
+    related_position_key: str | None
+    validation_status: str
+    execution_status: str
+    schwab_order_id: str | None
+    rationale: list[Any]
+    raw_payload: dict[str, Any]
+    validation_errors: list[Any]
+    created_at: datetime
+    updated_at: datetime
+
+
 class AutomationStore:
     def __init__(self, settings: AutomationStoreSettings) -> None:
         self._settings = settings
@@ -123,6 +149,12 @@ class AutomationStore:
         )
         self._decisions = Table(
             settings.decisions_table_name,
+            self._metadata,
+            autoload_with=self._engine,
+            schema=settings.schema_name,
+        )
+        self._action_intents = Table(
+            settings.action_intents_table_name,
             self._metadata,
             autoload_with=self._engine,
             schema=settings.schema_name,
@@ -345,3 +377,84 @@ class AutomationStore:
         with self.session() as session:
             rows = session.execute(statement).mappings().all()
         return [BrokerPositionRecord(**dict(row)) for row in rows]
+
+    def record_action_intent(
+        self,
+        *,
+        run_id: int,
+        action_index: int,
+        action_type: str,
+        status: str,
+        symbol: str | None = None,
+        strategy_type: str | None = None,
+        confidence: str | None = None,
+        quantity: int | None = None,
+        option_type: str | None = None,
+        expiration_date: datetime | None = None,
+        strike_price: Decimal | int | float | str | None = None,
+        limit_price: Decimal | int | float | str | None = None,
+        related_position_key: str | None = None,
+        validation_status: str = "pending",
+        execution_status: str = "not_submitted",
+        schwab_order_id: str | None = None,
+        rationale: list[Any] | None = None,
+        raw_payload: dict[str, Any] | None = None,
+        validation_errors: list[Any] | None = None,
+    ) -> AutomationActionIntentRecord:
+        timestamp = _now_utc()
+        with self.session() as session, session.begin():
+            row = session.execute(
+                insert(self._action_intents)
+                .values(
+                    run_id=run_id,
+                    action_index=action_index,
+                    action_type=action_type,
+                    symbol=symbol,
+                    strategy_type=strategy_type,
+                    status=status,
+                    confidence=confidence,
+                    quantity=quantity,
+                    option_type=option_type,
+                    expiration_date=expiration_date,
+                    strike_price=_to_decimal(strike_price),
+                    limit_price=_to_decimal(limit_price),
+                    related_position_key=related_position_key,
+                    validation_status=validation_status,
+                    execution_status=execution_status,
+                    schwab_order_id=schwab_order_id,
+                    rationale=rationale or [],
+                    raw_payload=raw_payload or {},
+                    validation_errors=validation_errors or [],
+                    updated_at=timestamp,
+                )
+                .returning(*self._action_intents.c)
+            ).mappings().one()
+        return AutomationActionIntentRecord(**dict(row))
+
+    def update_action_intent(
+        self,
+        *,
+        intent_id: int,
+        validation_status: str | None = None,
+        execution_status: str | None = None,
+        schwab_order_id: str | None = None,
+        validation_errors: list[Any] | None = None,
+    ) -> AutomationActionIntentRecord:
+        timestamp = _now_utc()
+        update_values: dict[str, Any] = {"updated_at": timestamp}
+        if validation_status is not None:
+            update_values["validation_status"] = validation_status
+        if execution_status is not None:
+            update_values["execution_status"] = execution_status
+        if schwab_order_id is not None:
+            update_values["schwab_order_id"] = schwab_order_id
+        if validation_errors is not None:
+            update_values["validation_errors"] = validation_errors
+        with self.session() as session, session.begin():
+            row = session.execute(
+                update(self._action_intents)
+                .where(self._action_intents.c.id == intent_id)
+                .values(**update_values)
+                .returning(*self._action_intents.c)
+            ).mappings().one()
+        return AutomationActionIntentRecord(**dict(row))

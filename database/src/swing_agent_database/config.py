@@ -104,6 +104,7 @@ class AutomationStoreSettings:
     accounts_table_name: str
     positions_table_name: str
     decisions_table_name: str
+    action_intents_table_name: str
 
 
 def load_price_store_settings(*, consumer_name: str = "price-data-mcp") -> PriceStoreSettings:
@@ -152,4 +153,5 @@ def load_automation_store_settings(*, consumer_name: str = "service") -> Automat
         accounts_table_name=os.getenv("AUTOMATION_ACCOUNTS_TABLE", "broker_accounts"),
         positions_table_name=os.getenv("AUTOMATION_POSITIONS_TABLE", "broker_positions"),
         decisions_table_name=os.getenv("AUTOMATION_DECISIONS_TABLE", "automation_decisions"),
+        action_intents_table_name=os.getenv("AUTOMATION_ACTION_INTENTS_TABLE", "automation_action_intents"),
     )

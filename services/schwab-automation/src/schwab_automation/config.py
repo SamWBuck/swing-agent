@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date, timedelta
+from importlib.resources import files
 from pathlib import Path
 
-from swing_agent_database import AutomationStoreSettings, load_automation_store_settings
+from swing_agent_database import (
+    AutomationStoreSettings,
+    SymbolAvailabilitySettings,
+    load_automation_store_settings,
+    load_symbol_availability_settings,
+)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -54,6 +61,7 @@ def _resolve_path(value: str, *, base_dir: Path) -> Path:
 @dataclass(frozen=True)
 class Settings:
     automation_store: AutomationStoreSettings
+    symbol_availability_store: SymbolAvailabilitySettings
     schwab_api_key: str
     schwab_app_secret: str
     schwab_callback_url: str
@@ -70,6 +78,30 @@ class Settings:
     request_timeout_seconds: int
     webhook_timeout_seconds: int
     interactive_login: bool
+    min_csp_reserve: int
+    min_entry_cash: int
+    roll_dte_threshold_days: int
+    close_dte_threshold_days: int
+    analysis_enabled: bool
+    analysis_timeout_seconds: int
+    execution_enabled: bool
+    enable_new_entries: bool
+    enable_management: bool
+    enforce_trading_window: bool
+    trading_timezone: str
+    trading_start_hour: int
+    trading_start_minute: int
+    trading_end_hour: int
+    trading_end_minute: int
+    entry_candidate_prompt_path: Path
+    entry_chain_min_dte: int
+    entry_chain_max_dte: int
+    entry_chain_strike_count: int
+    entry_chain_contract_limit: int
+    sec_edgar_mcp_url: str
+    yahoo_finance_mcp_url: str
+    price_data_mcp_url: str
+    automation_prompt_path: Path
 
 
 def load_settings() -> Settings:
@@ -80,6 +112,7 @@ def load_settings() -> Settings:
     )
     return Settings(
         automation_store=load_automation_store_settings(consumer_name="schwab-automation"),
+        symbol_availability_store=load_symbol_availability_settings(consumer_name="schwab-automation"),
         schwab_api_key=_required_env("SCHWAB_API_KEY"),
         schwab_app_secret=_required_env("SCHWAB_APP_SECRET"),
         schwab_callback_url=_required_env("SCHWAB_CALLBACK_URL"),
@@ -98,4 +131,38 @@ def load_settings() -> Settings:
         request_timeout_seconds=_env_int("SCHWAB_REQUEST_TIMEOUT_SECONDS", 60),
         webhook_timeout_seconds=_env_int("AUTOMATION_WEBHOOK_TIMEOUT_SECONDS", 15),
         interactive_login=_env_bool("SCHWAB_INTERACTIVE_LOGIN", True),
+        min_csp_reserve=_env_int("AUTOMATION_MIN_CSP_RESERVE", 2500),
+        min_entry_cash=_env_int("AUTOMATION_MIN_ENTRY_CASH", 1000),
+        roll_dte_threshold_days=_env_int("AUTOMATION_ROLL_DTE_THRESHOLD_DAYS", 7),
+        close_dte_threshold_days=_env_int("AUTOMATION_CLOSE_DTE_THRESHOLD_DAYS", 1),
+        analysis_enabled=_env_bool("AUTOMATION_ANALYSIS_ENABLED", True),
+        analysis_timeout_seconds=_env_int("AUTOMATION_ANALYSIS_TIMEOUT_SECONDS", 120),
+        execution_enabled=_env_bool("AUTOMATION_EXECUTION_ENABLED", False),
+        enable_new_entries=_env_bool("AUTOMATION_ENABLE_NEW_ENTRIES", False),
+        enable_management=_env_bool("AUTOMATION_ENABLE_MANAGEMENT", True),
+        enforce_trading_window=_env_bool("AUTOMATION_ENFORCE_TRADING_WINDOW", True),
+        trading_timezone=os.getenv("AUTOMATION_TRADING_TIMEZONE", "America/New_York"),
+        trading_start_hour=_env_int("AUTOMATION_TRADING_START_HOUR", 10),
+        trading_start_minute=_env_int("AUTOMATION_TRADING_START_MINUTE", 0),
+        trading_end_hour=_env_int("AUTOMATION_TRADING_END_HOUR", 15),
+        trading_end_minute=_env_int("AUTOMATION_TRADING_END_MINUTE", 0),
+        entry_candidate_prompt_path=Path(
+            os.getenv(
+                "AUTOMATION_ENTRY_CANDIDATE_PROMPT_PATH",
+                str(files("schwab_automation").joinpath("prompts/options-income-candidate.prompt.md")),
+            )
+        ),
+        entry_chain_min_dte=_env_int("AUTOMATION_ENTRY_CHAIN_MIN_DTE", 7),
+        entry_chain_max_dte=_env_int("AUTOMATION_ENTRY_CHAIN_MAX_DTE", 45),
+        entry_chain_strike_count=_env_int("AUTOMATION_ENTRY_CHAIN_STRIKE_COUNT", 12),
+        entry_chain_contract_limit=_env_int("AUTOMATION_ENTRY_CHAIN_CONTRACT_LIMIT", 12),
+        sec_edgar_mcp_url=os.getenv("SEC_EDGAR_MCP_URL", "http://localhost:9870/mcp"),
+        yahoo_finance_mcp_url=os.getenv("YAHOO_FINANCE_MCP_URL", "http://localhost:8809/mcp"),
+        price_data_mcp_url=os.getenv("PRICE_DATA_MCP_URL", "http://localhost:8810/mcp"),
+        automation_prompt_path=Path(
+            os.getenv(
+                "AUTOMATION_PROMPT_PATH",
+                str(files("schwab_automation").joinpath("prompts/options-income-automation.prompt.md")),
+            )
+        ),
     )

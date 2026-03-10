@@ -34,11 +34,3 @@ services:
     env_file:
       - ../.env
     restart: unless-stopped
-
-  schwab-automation:
-    build:
-      context: ..
-      dockerfile: services/schwab-automation/Dockerfile
-    env_file:
-      - ../.env
-    restart: unless-stopped

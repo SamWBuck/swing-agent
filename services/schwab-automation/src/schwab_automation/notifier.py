@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
-
 import httpx
 
 log = logging.getLogger(__name__)
@@ -76,27 +74,6 @@ class DiscordNotifier:
             await self._send_via_webhook(content)
             return
         log.info("Discord delivery not configured; message=%s", content)
-
-    async def send_run_summary(
-        self,
-        *,
-        account_label: str,
-        positions_count: int,
-        cash_available: str | None,
-        liquidation_value: str | None,
-        run_details: dict[str, Any],
-    ) -> None:
-        lines = [
-            f"[{run_details['service_name']}] {run_details['run_type']} reconcile completed",
-            f"Account: {account_label}",
-            f"Positions: {positions_count}",
-        ]
-        if cash_available is not None:
-            lines.append(f"Cash balance: {cash_available}")
-        if liquidation_value is not None:
-            lines.append(f"Liquidation value: {liquidation_value}")
-        lines.append(f"Dry run: {'yes' if run_details['dry_run'] else 'no'}")
-        await self.send("\n".join(lines))
 
     async def send_failure(self, *, service_name: str, run_type: str, error_text: str) -> None:
         await self.send(

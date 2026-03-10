@@ -10,6 +10,7 @@ from .config import (
     load_symbol_availability_settings,
 )
 from .automation_store import (
+    AutomationActionIntentRecord,
     AutomationDecisionRecord,
     AutomationRunRecord,
     AutomationStore,
@@ -31,6 +32,7 @@ from .price_store import CandleColumns, PriceStore
 from .symbol_availability import SymbolAvailabilityRecord, SymbolAvailabilityStore
 
 __all__ = [
+    "AutomationActionIntentRecord",
     "AutomationDecisionRecord",
     "AutomationRunRecord",
     "AutomationStore",
