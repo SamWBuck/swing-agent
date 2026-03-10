@@ -9,6 +9,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+import httpx
+
 from .config import Settings
 from .models import CandleRecord, SyncResult, SymbolAvailability
 from .repository import Repository
@@ -123,6 +125,14 @@ def _batched(records: Sequence[CandleRecord], batch_size: int) -> Iterable[list[
         yield list(records[index:index + batch_size])
 
 
+def _should_skip_bootstrap_window_error(
+    spec: IntervalSpec,
+    latest_ts: datetime | None,
+    response: httpx.Response,
+) -> bool:
+    return latest_ts is None and spec.interval == "1m" and response.status_code == 400
+
+
 async def _fetch_interval_candles(
     client: Any,
     settings: Settings,
@@ -142,7 +152,20 @@ async def _fetch_interval_candles(
             need_extended_hours_data=settings.need_extended_hours_data,
             need_previous_close=False,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            if _should_skip_bootstrap_window_error(spec, latest_ts, response):
+                log.warning(
+                    "Skipping %s %s bootstrap window %s -> %s after Schwab returned %s",
+                    symbol,
+                    spec.interval,
+                    start,
+                    end,
+                    response.status_code,
+                )
+                continue
+            raise
         payload = response.json()
         raw_candles = payload.get("candles", [])
         all_candles.extend(_normalize_candle(symbol, spec.interval, candle) for candle in raw_candles)

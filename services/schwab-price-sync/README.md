@@ -44,4 +44,4 @@ python -m schwab_price_sync.main --interval 1m --interval 5m --stale-only
 - `SCHWAB_TOKEN_PATH` is resolved relative to the repo root when it is not absolute.
 - The first run may require browser-based Schwab authentication if no token file exists yet.
 - The Dockerfile expects to be built from the repository root so it can copy `token.json` into `/app/token.json` during build.
-- The cron container runs two schedules: every 30 minutes for `1m` and `5m`, and every hour for `10m`, `15m`, `30m`, `1d`, and `1w`, each with stale-only filtering.
+- The cron container runs three schedules: every minute for symbols with missing interval timestamps, every 30 minutes for stale `1m` and `5m` data, and every hour for stale `10m`, `15m`, `30m`, `1d`, and `1w` data.
