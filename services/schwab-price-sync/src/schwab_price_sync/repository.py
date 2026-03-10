@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import MetaData, Table, and_, create_engine, or_, select
+from sqlalchemy import MetaData, Table, create_engine, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -131,7 +131,12 @@ class Repository:
             set_=update_map,
             where=changed,
         )
+        statement = statement.returning(
+            self._price_candles.c.symbol,
+            self._price_candles.c.interval,
+            self._price_candles.c.ts,
+        )
 
         with self.session() as session, session.begin():
             result = session.execute(statement)
-            return result.rowcount or 0
+            return len(result.fetchall())
