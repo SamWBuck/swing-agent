@@ -372,6 +372,7 @@ async def _create_session(channel_id: int):
     """Create a fresh Copilot session for a Discord user."""
     system_message = _get_system_message(channel_id)
     session = await copilot_client.create_session({
+        "model": "gpt-5.4",
         "client_name": "swing-agent-discord",
         "on_permission_request": PermissionHandler.approve_all,
         "system_message": {
