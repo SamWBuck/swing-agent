@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+import logging
+import os
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -29,6 +32,14 @@ except ImportError:
 settings = load_price_store_settings()
 store = PriceStore(settings)
 mcp = FastMCP("price-data-mcp")
+log = logging.getLogger(__name__)
+
+
+def _trace_tool_call(tool_name: str, **kwargs: Any) -> None:
+    payload = {"tool": tool_name, "args": kwargs}
+    message = f"MCP_TOOL_CALL {json.dumps(payload, default=str, sort_keys=True)}"
+    print(message, flush=True)
+    log.info(message)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -47,12 +58,14 @@ def _effective_limit(limit: int | None) -> int:
 @mcp.tool()
 def describe_price_source() -> dict[str, Any]:
     """Describe the configured candle table and mapped OHLCV columns."""
+    _trace_tool_call("describe_price_source")
     return store.describe_source()
 
 
 @mcp.tool()
 def list_symbols(interval: str | None = None, limit: int = 500) -> dict[str, Any]:
     """List symbols available in the candle store, optionally filtered by interval."""
+    _trace_tool_call("list_symbols", interval=interval, limit=limit)
     return {
         "interval": interval,
         "symbols": store.list_symbols(interval=interval, limit=limit),
@@ -62,6 +75,7 @@ def list_symbols(interval: str | None = None, limit: int = 500) -> dict[str, Any
 @mcp.tool()
 def list_intervals(symbol: str | None = None, limit: int = 100) -> dict[str, Any]:
     """List intervals available in the candle store, optionally filtered by symbol."""
+    _trace_tool_call("list_intervals", symbol=symbol, limit=limit)
     return {
         "symbol": symbol,
         "intervals": store.list_intervals(symbol=symbol, limit=limit),
@@ -78,6 +92,15 @@ def get_raw_candles(
     ascending: bool = True,
 ) -> dict[str, Any]:
     """Fetch raw OHLCV candles from Postgres with symbol, interval, and time filtering."""
+    _trace_tool_call(
+        "get_raw_candles",
+        symbol=symbol,
+        interval=interval,
+        start=start,
+        end=end,
+        limit=limit,
+        ascending=ascending,
+    )
     candles = store.fetch_candles(
         symbol=symbol,
         interval=interval,
@@ -97,6 +120,7 @@ def get_raw_candles(
 @mcp.tool()
 def get_indicator_catalog() -> dict[str, Any]:
     """Return the supported indicator catalog and explain all-feature mode."""
+    _trace_tool_call("get_indicator_catalog")
     return indicator_catalog()
 
 
@@ -112,6 +136,17 @@ def calculate_indicators(
     tail: int = 50,
 ) -> dict[str, Any]:
     """Calculate technical indicators over stored candles using the ta library."""
+    _trace_tool_call(
+        "calculate_indicators",
+        symbol=symbol,
+        interval=interval,
+        mode=mode,
+        indicators=indicators,
+        start=start,
+        end=end,
+        limit=limit,
+        tail=tail,
+    )
     candles = store.fetch_candles(
         symbol=symbol,
         interval=interval,
@@ -126,7 +161,7 @@ def calculate_indicators(
         enriched = compute_all_indicators(frame)
         selected = [column for column in enriched.columns if column not in frame.columns]
     else:
-        requested = indicators or ["rsi", "macd", "atr", "bollinger", "obv"]
+        requested = indicators or ["rsi", "macd", "atr", "atr_pct", "bollinger", "obv", "hv_20", "return_20d"]
         enriched = compute_selected_indicators(frame, requested)
         selected = [column for column in enriched.columns if column not in frame.columns]
 
@@ -152,6 +187,17 @@ def get_support_resistance(
     max_levels: int = 5,
 ) -> dict[str, Any]:
     """Estimate support and resistance levels from swing highs and lows in candle data."""
+    _trace_tool_call(
+        "get_support_resistance",
+        symbol=symbol,
+        interval=interval,
+        start=start,
+        end=end,
+        limit=limit,
+        pivot_lookback=pivot_lookback,
+        tolerance_pct=tolerance_pct,
+        max_levels=max_levels,
+    )
     candles = store.fetch_candles(
         symbol=symbol,
         interval=interval,
@@ -183,6 +229,14 @@ def summarize_market_data(
     limit: int | None = None,
 ) -> dict[str, Any]:
     """Return a compact technical snapshot combining candles, indicators, and support/resistance."""
+    _trace_tool_call(
+        "summarize_market_data",
+        symbol=symbol,
+        interval=interval,
+        start=start,
+        end=end,
+        limit=limit,
+    )
     candles = store.fetch_candles(
         symbol=symbol,
         interval=interval,
@@ -192,7 +246,10 @@ def summarize_market_data(
         ascending=True,
     )
     frame = frame_from_records(candles)
-    enriched = compute_selected_indicators(frame, ["rsi", "macd", "atr", "adx", "bollinger", "mfi", "obv"])
+    enriched = compute_selected_indicators(
+        frame,
+        ["rsi", "macd", "atr", "atr_pct", "adx", "bollinger", "mfi", "obv", "hv_20", "return_20d", "cmf"],
+    )
     latest = serialize_frame(enriched, tail=1)[0]
     levels = calculate_support_resistance(frame, lookback=3, tolerance_pct=0.005, max_levels=3)
 
@@ -206,7 +263,10 @@ def summarize_market_data(
 
 
 def main() -> None:
-    mcp.run(transport="streamable-http")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    transport = os.getenv("MCP_TRANSPORT", "streamable-http")
+    log.info("Starting price-data MCP server transport=%s", transport)
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":

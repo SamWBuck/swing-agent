@@ -76,6 +76,8 @@ class RollValidationTests(unittest.TestCase):
             supported_symbols=["SPY"],
             enable_new_entries=False,
             enable_management=True,
+            liquidation_value=Decimal("25000"),
+            max_position_pct_of_portfolio=50,
         )[0]
 
         self.assertEqual(result.validation_status, "valid")
@@ -108,6 +110,8 @@ class RollValidationTests(unittest.TestCase):
             supported_symbols=["SPY"],
             enable_new_entries=False,
             enable_management=True,
+            liquidation_value=Decimal("25000"),
+            max_position_pct_of_portfolio=50,
         )[0]
 
         self.assertEqual(result.validation_status, "invalid")
@@ -188,6 +192,8 @@ class RollExecutionTests(unittest.IsolatedAsyncioTestCase):
             supported_symbols=["SPY"],
             enable_new_entries=False,
             enable_management=True,
+            liquidation_value=Decimal("25000"),
+            max_position_pct_of_portfolio=50,
         )[0]
 
         order = await build_order_spec(_FakeClient(), validated)

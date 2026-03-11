@@ -5,19 +5,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import URL
 
-
-def _env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None or value == "":
-        return default
-    return int(value)
-
-
-def _optional_env(name: str) -> str | None:
-    value = os.getenv(name)
-    if value is None or value == "":
-        return None
-    return value
+from .env_helpers import env_int, optional_env
 
 
 def build_database_url(*, consumer_name: str = "service") -> str:
@@ -35,10 +23,10 @@ def build_database_url(*, consumer_name: str = "service") -> str:
         )
 
     query: dict[str, str] = {}
-    sslmode = _optional_env("DB_SSLMODE")
-    sslrootcert = _optional_env("DB_SSLROOTCERT")
-    sslcert = _optional_env("DB_SSLCERT")
-    sslkey = _optional_env("DB_SSLKEY")
+    sslmode = optional_env("DB_SSLMODE")
+    sslrootcert = optional_env("DB_SSLROOTCERT")
+    sslcert = optional_env("DB_SSLCERT")
+    sslkey = optional_env("DB_SSLKEY")
 
     if sslmode:
         query["sslmode"] = sslmode
@@ -120,8 +108,8 @@ def load_price_store_settings(*, consumer_name: str = "price-data-mcp") -> Price
         low_column=os.getenv("PRICE_CANDLES_LOW_COLUMN", "low"),
         close_column=os.getenv("PRICE_CANDLES_CLOSE_COLUMN", "close"),
         volume_column=os.getenv("PRICE_CANDLES_VOLUME_COLUMN", "volume"),
-        default_limit=_env_int("PRICE_DATA_DEFAULT_LIMIT", 200),
-        max_limit=_env_int("PRICE_DATA_MAX_LIMIT", 5000),
+        default_limit=env_int("PRICE_DATA_DEFAULT_LIMIT", 200),
+        max_limit=env_int("PRICE_DATA_MAX_LIMIT", 5000),
     )
 
 

@@ -22,7 +22,7 @@ from schwab.orders.options import (
 )
 from schwab.utils import Utils
 
-from .llm_actions import ValidatedAction
+from .llm_actions import MatchedPosition, ValidatedAction
 
 
 @dataclass(frozen=True)
@@ -61,8 +61,8 @@ def _roll_strategy_type(validated: ValidatedAction) -> ComplexOrderStrategyType:
     return ComplexOrderStrategyType.CUSTOM
 
 
-def _matched_option_symbol(matched_position: dict[str, Any]) -> str | None:
-    raw_payload = matched_position.get("raw_payload") or {}
+def _matched_option_symbol(matched_position: MatchedPosition) -> str | None:
+    raw_payload = matched_position.raw_payload or {}
     instrument = raw_payload.get("instrument") or {}
     symbol = instrument.get("symbol")
     if symbol:
@@ -99,6 +99,7 @@ async def resolve_option_contract_symbol(client: Any, *, symbol: str, option_typ
 
 
 async def build_order_spec(client: Any, validated: ValidatedAction) -> dict:
+    """Translate a validated automation action into a Schwab order specification."""
     action = validated.proposed
     option_expiration = None if action.expiration is None else datetime(action.expiration.year, action.expiration.month, action.expiration.day, tzinfo=UTC)
     contract_symbol = None
@@ -116,8 +117,8 @@ async def build_order_spec(client: Any, validated: ValidatedAction) -> dict:
         return builder.build()
 
     if action.action_type == "close_option":
-        matched = validated.matched_position or {}
-        long_quantity = Decimal(str(matched.get("long_quantity") or 0))
+        matched = validated.matched_position
+        long_quantity = Decimal("0") if matched is None else matched.long_quantity
         if long_quantity > 0:
             builder = option_sell_to_close_limit(contract_symbol, action.quantity or 0, float(action.limit_price or 0))
         else:
@@ -125,8 +126,8 @@ async def build_order_spec(client: Any, validated: ValidatedAction) -> dict:
         return builder.build()
 
     if action.action_type == "roll_option":
-        matched = validated.matched_position or {}
-        current_symbol = _matched_option_symbol(matched)
+        matched = validated.matched_position
+        current_symbol = None if matched is None else _matched_option_symbol(matched)
         if current_symbol is None:
             current_expiration = action.current_expiration
             current_strike = action.current_strike
@@ -170,6 +171,7 @@ async def build_order_spec(client: Any, validated: ValidatedAction) -> dict:
 
 
 async def execute_action(client: Any, *, account_hash: str, validated: ValidatedAction) -> ExecutionResult:
+    """Submit a validated order to Schwab and normalize the execution result."""
     if not validated.execution_supported or validated.validation_status != "valid":
         return ExecutionResult(execution_status="skipped", schwab_order_id=None, message="Action is not executable")
 

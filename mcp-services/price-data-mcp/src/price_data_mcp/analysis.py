@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+import numpy as np
 import pandas as pd
 from ta import add_all_ta_features
 from ta.momentum import (
@@ -42,6 +43,7 @@ INDICATOR_DEFINITIONS: dict[str, IndicatorDefinition] = {
     "sma_20": IndicatorDefinition("sma_20", "trend", ("sma_20",), 20),
     "macd": IndicatorDefinition("macd", "trend", ("macd", "macd_signal", "macd_diff"), 26),
     "atr": IndicatorDefinition("atr", "volatility", ("atr",), 14),
+    "atr_pct": IndicatorDefinition("atr_pct", "volatility", ("atr_pct",), 14),
     "bollinger": IndicatorDefinition(
         "bollinger",
         "volatility",
@@ -57,6 +59,8 @@ INDICATOR_DEFINITIONS: dict[str, IndicatorDefinition] = {
     "cmf": IndicatorDefinition("cmf", "volume", ("cmf",), 20),
     "mfi": IndicatorDefinition("mfi", "volume", ("mfi",), 14),
     "obv": IndicatorDefinition("obv", "volume", ("obv",), 2),
+    "hv_20": IndicatorDefinition("hv_20", "volatility", ("hv_20",), 21),
+    "return_20d": IndicatorDefinition("return_20d", "trend", ("return_20d",), 21),
 }
 
 
@@ -148,6 +152,13 @@ def compute_selected_indicators(frame: pd.DataFrame, indicators: Iterable[str]) 
                 low=output["low"],
                 close=output["close"],
             ).average_true_range()
+        elif name == "atr_pct":
+            atr = AverageTrueRange(
+                high=output["high"],
+                low=output["low"],
+                close=output["close"],
+            ).average_true_range()
+            output["atr_pct"] = (atr / output["close"]) * 100
         elif name == "bollinger":
             indicator = BollingerBands(close=output["close"])
             output["bollinger_mavg"] = indicator.bollinger_mavg()
@@ -174,6 +185,11 @@ def compute_selected_indicators(frame: pd.DataFrame, indicators: Iterable[str]) 
                 close=output["close"],
                 volume=output["volume"],
             ).on_balance_volume()
+        elif name == "hv_20":
+            log_returns = np.log(output["close"] / output["close"].shift(1))
+            output["hv_20"] = log_returns.rolling(window=20).std() * (252 ** 0.5) * 100
+        elif name == "return_20d":
+            output["return_20d"] = (output["close"] / output["close"].shift(20) - 1) * 100
 
     return output
 

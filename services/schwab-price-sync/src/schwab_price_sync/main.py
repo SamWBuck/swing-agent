@@ -3,22 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from pathlib import Path
 
 from dotenv import load_dotenv
+from swing_agent_database import find_project_root
 
 from .config import load_settings
 from .repository import Repository
 from .sync import INTERVAL_SPECS, sync_symbols
-
-
-def _find_project_root() -> Path:
-    candidates = [Path.cwd(), Path(__file__).resolve().parent]
-    for candidate in candidates:
-        for current in (candidate, *candidate.parents):
-            if (current / ".env").exists() or (current / ".git").exists():
-                return current
-    return Path.cwd()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -52,7 +43,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _main_async(args: argparse.Namespace) -> int:
-    workspace_root = _find_project_root()
+    workspace_root = find_project_root()
     load_dotenv(workspace_root / ".env")
 
     settings = load_settings()

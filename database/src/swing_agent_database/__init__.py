@@ -9,6 +9,7 @@ from .config import (
     load_price_store_settings,
     load_symbol_availability_settings,
 )
+from .env_helpers import env_bool, env_int, find_project_root, optional_env, required_env, resolve_path
 from .automation_store import (
     AutomationActionIntentRecord,
     AutomationDecisionRecord,
@@ -56,8 +57,14 @@ __all__ = [
     "SymbolAvailabilityStore",
     "TradeEventRecord",
     "build_database_url",
+    "env_bool",
+    "env_int",
+    "find_project_root",
     "load_automation_store_settings",
     "load_portfolio_store_settings",
     "load_price_store_settings",
     "load_symbol_availability_settings",
+    "optional_env",
+    "required_env",
+    "resolve_path",
 ]

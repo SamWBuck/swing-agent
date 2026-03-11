@@ -3,21 +3,12 @@ from __future__ import annotations
 import asyncio
 import argparse
 import logging
-from pathlib import Path
 
 from dotenv import load_dotenv
+from swing_agent_database import find_project_root
 
 from .config import load_settings
 from .schwab_client import create_async_client
-
-
-def _find_project_root() -> Path:
-    candidates = [Path.cwd(), Path(__file__).resolve().parent]
-    for candidate in candidates:
-        for current in (candidate, *candidate.parents):
-            if (current / ".env").exists() or (current / ".git").exists():
-                return current
-    return Path.cwd()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -33,7 +24,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _main_async(args: argparse.Namespace) -> None:
-    project_root = _find_project_root()
+    project_root = find_project_root()
     load_dotenv(project_root / ".env")
 
     settings = load_settings()

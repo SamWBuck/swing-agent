@@ -159,6 +159,9 @@ def _extract_balances(account_data: dict[str, Any]) -> tuple[dict[str, Any], Dec
 
 
 def _select_account(accounts: list[dict[str, Any]], settings: Settings) -> dict[str, Any]:
+    if not accounts:
+        raise RuntimeError("Schwab returned no linked accounts for this token")
+
     if settings.preferred_account_hash:
         for account in accounts:
             if account.get("hashValue") == settings.preferred_account_hash:
@@ -171,8 +174,10 @@ def _select_account(accounts: list[dict[str, Any]], settings: Settings) -> dict[
                 return account
         raise RuntimeError(f"Preferred account number {settings.preferred_account_number} was not returned by Schwab")
 
-    if not accounts:
-        raise RuntimeError("Schwab returned no linked accounts for this token")
+    if settings.require_explicit_account and not settings.dry_run:
+        raise RuntimeError(
+            "Explicit Schwab account selection is required outside dry-run mode; set SCHWAB_ACCOUNT_HASH or SCHWAB_ACCOUNT_NUMBER"
+        )
     return accounts[0]
 
 
