@@ -2,101 +2,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Discord Bot",
+            "name": "Python: Current File",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/discord_bot.py",
-            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
-            "console": "integratedTerminal",
-            "envFile": "${workspaceFolder}/.env"
-        },
-        {
-            "name": "Schwab Load Token",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "schwab_price_sync.load_token",
-            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "envFile": "${workspaceFolder}/.env",
-            "args": [
-                "--symbol",
-                "SPY"
-            ]
-        },
-        {
-            "name": "Schwab Price Sync",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "schwab_price_sync.main",
-            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "envFile": "${workspaceFolder}/.env"
-        },
-        {
-            "name": "Schwab Automation Dry Run",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "schwab_automation.main",
-            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "envFile": "${workspaceFolder}/.env",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/services/schwab-automation/src;${workspaceFolder}/database/src",
-                "AUTOMATION_EXECUTION_ENABLED": "false"
-            },
-            "args": [
-                "--dry-run",
-                "--log-level",
-                "INFO"
-            ]
-        },
-        {
-            "name": "Schwab Automation Dry Run Loop",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "schwab_automation.main",
-            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "envFile": "${workspaceFolder}/.env",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/services/schwab-automation/src;${workspaceFolder}/database/src",
-                "AUTOMATION_EXECUTION_ENABLED": "false"
-            },
-            "args": [
-                "--dry-run",
-                "--loop",
-                "--interval-seconds",
-                "3600",
-                "--log-level",
-                "INFO"
-            ]
-        },
-        {
-            "name": "Schwab Automation Live Loop",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "schwab_automation.main",
-            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "envFile": "${workspaceFolder}/.env",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/services/schwab-automation/src;${workspaceFolder}/database/src",
-                "AUTOMATION_DRY_RUN": "false",
-                "AUTOMATION_EXECUTION_ENABLED": "true",
-                "AUTOMATION_ENFORCE_TRADING_WINDOW": "true"
-            },
-            "args": [
-                "--loop",
-                "--interval-seconds",
-                "3600",
-                "--log-level",
-                "INFO"
-            ]
+            "program": "${file}",
+            "console": "integratedTerminal"
         }
     ]
 }

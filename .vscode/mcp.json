@@ -1,16 +1,8 @@
 {
   "servers": {
-    "sec-edgar": {
-      "type": "http",
-      "url": "http://localhost:9870/mcp"
-    },
     "yahoo-finance": {
       "type": "http",
       "url": "http://localhost:8809/mcp"
-    },
-    "price-data": {
-      "type": "http",
-      "url": "http://localhost:8810/mcp"
     }
   }
 }
