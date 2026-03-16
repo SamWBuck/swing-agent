@@ -169,11 +169,6 @@ async def _run_once(settings: Settings) -> None:
 
         # Step 2: build context — raw positions + cash + trading window
         trading_window = _get_trading_window_status(datetime.now(tz=UTC), settings)
-        if settings.dry_run:
-            execution_enabled = False
-        else:
-            execution_enabled = settings.execution_enabled and trading_window.is_open
-
         context = _build_context(snapshot, trading_window, dry_run=settings.dry_run)
 
         # Step 3+4: send context + available MCP tools to the agent
@@ -188,7 +183,13 @@ async def _run_once(settings: Settings) -> None:
         actions: list[dict] = result.get("actions") or []
         log.info("LLM analysis returned %d actions for account=%s", len(actions), snapshot.account_hash)
 
-        # Step 6: execute trades via Schwab-py
+        # Step 6: execute trades via Schwab-py — re-check window just before placing orders
+        pre_execution_window = _get_trading_window_status(datetime.now(tz=UTC), settings)
+        if settings.dry_run:
+            execution_enabled = False
+        else:
+            execution_enabled = settings.execution_enabled and pre_execution_window.is_open
+
         executed: list[tuple[dict, str | None]] = []
         errors: list[str] = []
         if execution_enabled:

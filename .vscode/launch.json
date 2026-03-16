@@ -45,12 +45,7 @@
             "envFile": "${workspaceFolder}/.env",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/services/schwab-automation/src;${workspaceFolder}/database/src",
-                "AUTOMATION_DRY_RUN": "true",
-                "AUTOMATION_ANALYSIS_ENABLED": "true",
-                "AUTOMATION_EXECUTION_ENABLED": "false",
-                "AUTOMATION_ENABLE_NEW_ENTRIES": "true",
-                "AUTOMATION_ENABLE_MANAGEMENT": "true",
-                "AUTOMATION_ENFORCE_TRADING_WINDOW": "true"
+                "AUTOMATION_EXECUTION_ENABLED": "false"
             },
             "args": [
                 "--dry-run",
@@ -69,15 +64,33 @@
             "envFile": "${workspaceFolder}/.env",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/services/schwab-automation/src;${workspaceFolder}/database/src",
-                "AUTOMATION_DRY_RUN": "true",
-                "AUTOMATION_ANALYSIS_ENABLED": "true",
-                "AUTOMATION_EXECUTION_ENABLED": "false",
-                "AUTOMATION_ENABLE_NEW_ENTRIES": "true",
-                "AUTOMATION_ENABLE_MANAGEMENT": "true",
-                "AUTOMATION_ENFORCE_TRADING_WINDOW": "true"
+                "AUTOMATION_EXECUTION_ENABLED": "false"
             },
             "args": [
                 "--dry-run",
+                "--loop",
+                "--interval-seconds",
+                "3600",
+                "--log-level",
+                "INFO"
+            ]
+        },
+        {
+            "name": "Schwab Automation Live Loop",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "schwab_automation.main",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/services/schwab-automation/src;${workspaceFolder}/database/src",
+                "AUTOMATION_DRY_RUN": "false",
+                "AUTOMATION_EXECUTION_ENABLED": "true",
+                "AUTOMATION_ENFORCE_TRADING_WINDOW": "true"
+            },
+            "args": [
                 "--loop",
                 "--interval-seconds",
                 "3600",
